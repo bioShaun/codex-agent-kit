@@ -1,0 +1,8 @@
+.work/
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+auth.json
+backups/
