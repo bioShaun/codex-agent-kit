@@ -548,14 +548,36 @@ def atomic_state(path: Path, state: dict[str, Any]) -> None:
             pass
 
 
-def error_state(request: dict[str, Any], message: str, evidence: list[str]) -> dict[str, Any]:
+def error_state(request: dict[str, Any], message: str, evidence: list[str], *,
+                validation: str, code_review: str) -> dict[str, Any]:
+    """Record a receive failure for the requested scope only.
+
+    A code-review contract error sets code_review=BLOCKED and leaves final
+    acceptance NOT_REQUESTED. A final-acceptance contract error sets
+    final_acceptance=BLOCKED and keeps the caller's existing code review.
+    Validation always stays the caller-supplied execution status. The broken
+    result is not published as a verdict.
+    """
+    if validation not in {"PASS", "FAIL", "BLOCKED", "NOT_RUN"}:
+        raise WorkflowError("validation has an invalid value")
+    if code_review not in {"PASS", "REQUEST_CHANGES", "BLOCKED", "NOT_REQUESTED"}:
+        raise WorkflowError("code_review has an invalid value")
+    kind = request["review_kind"]
+    if kind == "code":
+        recorded_code_review = "BLOCKED"
+        final_acceptance = "NOT_REQUESTED"
+    elif kind == "final":
+        recorded_code_review = code_review
+        final_acceptance = "BLOCKED"
+    else:
+        raise WorkflowError("review_kind must be code or final")
     state = {
         "scope_id": request["scope_id"],
         "snapshot_id": request["snapshot_id"],
-        "code_review": "BLOCKED",
-        "validation": "BLOCKED",
-        "final_acceptance": "BLOCKED",
-        "review_kind": request["review_kind"],
+        "code_review": recorded_code_review,
+        "validation": validation,
+        "final_acceptance": final_acceptance,
+        "review_kind": kind,
         "review_verdict": None,
         "isolation_requirement": request["isolation_requirement"],
         "evidence_refs": [item for item in evidence if item.strip()],
@@ -565,8 +587,12 @@ def error_state(request: dict[str, Any], message: str, evidence: list[str]) -> d
                 "review_kind", "review_verdict", "isolation_requirement", "evidence_refs", "contract_error"}
     if set(state) != expected or not state["contract_error"] or state["review_verdict"] is not None:
         raise WorkflowError("internal error-state shape violation")
-    if any(value == "PASS" for value in (state["code_review"], state["validation"], state["final_acceptance"])):
+    if state["final_acceptance"] == "PASS" or (kind == "code" and state["code_review"] == "PASS"):
         raise WorkflowError("internal error state contains a PASS claim")
+    if kind == "code" and (state["code_review"] != "BLOCKED" or state["final_acceptance"] != "NOT_REQUESTED"):
+        raise WorkflowError("internal code-review error state is inconsistent")
+    if kind == "final" and state["final_acceptance"] != "BLOCKED":
+        raise WorkflowError("internal final-acceptance error state is inconsistent")
     return state
 
 
@@ -629,7 +655,8 @@ def receive(args: argparse.Namespace) -> dict[str, Any]:
         (receipt / "receipt.json").write_bytes(json_bytes(metadata))
         try:
             safe_state_path(state_path, package, result)
-            blocked = error_state(request, str(exc), args.evidence)
+            blocked = error_state(request, str(exc), args.evidence,
+                                  validation=args.validation, code_review=args.code_review)
             candidate = receipt / "state.error.json"
             candidate.write_bytes(json_bytes(blocked))
             atomic_state(state_path, blocked)
