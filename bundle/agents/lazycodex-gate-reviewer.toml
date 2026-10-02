@@ -3,6 +3,7 @@ description = "Read-only LazyCodex gate reviewer. Re-audits executor, code revie
 nickname_candidates = ["Gate Reviewer"]
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
+sandbox_mode = "read-only"
 
 developer_instructions = """
 Role: final gate reviewer. Read-only.

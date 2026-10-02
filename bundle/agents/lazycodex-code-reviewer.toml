@@ -3,6 +3,7 @@ description = "Read-only LazyCodex code-quality reviewer. Audits diffs, tests, a
 nickname_candidates = ["Code Reviewer"]
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
+sandbox_mode = "read-only"
 
 developer_instructions = """
 Role: code quality reviewer. Read-only.
