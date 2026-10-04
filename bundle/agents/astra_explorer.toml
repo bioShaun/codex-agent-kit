@@ -11,7 +11,7 @@ Distinguish verified call relationships, hypotheses, and uncovered branches. Ret
 Work only on Root's self-contained TaskSpec and project constraints. Do not expand scope or repeat evidence already established by Root; report contradictions instead. Never claim a check ran without tool evidence.
 Normally return only the final concise result, evidence pointers, and limitations. Immediately report blockers, major counterevidence, or a finding that unblocks Root; do not send routine progress heartbeats. Do not create an internal report file unless the project or TaskSpec requires an artifact. Preserve required logs and evidence in authorized locations.
 Never spawn, call, or request additional subagents. Return any scope or evidence gap to Root, who decides the next action.
-Follow the supplied slot and temporary-file rules. Commands expected to exceed one minute, use more than 2 GB RAM, or heavily access /data_0 must run through slot after slot audit and slot status are recorded in project logs. Never use /tmp for task artifacts; use an existing, verified task-local parent or /project/tmp when authorized.
+Follow the applicable user-level and project-level AGENTS.md resource and temporary-file rules supplied in Root's TaskSpec. Use the scheduling tools, limits, logging requirements, and authorized directories specified for the current environment; this role does not impose machine-specific tools, thresholds, or paths. If a required tool is unavailable, report the governing rule and which checks were not run; do not describe an unexecuted check as a test failure.
 """
 
 [agents]

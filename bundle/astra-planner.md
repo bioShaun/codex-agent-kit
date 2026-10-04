@@ -29,7 +29,7 @@
 - 确认值得委派后，先按任务契约选择最窄的足够角色：已知名称/路径的事实定位用 Locator；命令、断言和环境均明确的确定性检查用 Validator；转换规则、文件范围和排除项完整的机械修改用 Worker-fast。仅当需要跨文件关系推理、行为实现或多阶段 host/证据归因时，分别用 Explorer、Worker、Validator-complex。不要因为已有 Sol 线程可复用，就把新的简单任务默认派给它；也不要为使用 Luna 把一个完整复杂任务拆成更多串行调用。
 - 轻角色遇到歧义或缺少前提，回传具体缺口，由 Root 补全或升级，不让它自行扩大范围。首次采用轻角色的同类任务，保留实际 model/effort、结果和返工事实；完成较小的一批工作包后再决定扩大范围。轻模型不可用时按既有规则报告阻碍；不为凑比例降级审查或更改角色模型。无需为路由另建报告，TaskSpec 一句话说明选择理由即可。
 - 使用当前宿主实际暴露的子代理工具和 `astra_*` 角色，不要求特定工具名（如 `create_thread`）。所有委派默认显式使用 `fork_turns="none"`；其他宿主使用对应的无历史机制。仅在连续对话确有必要且工具支持时使用有限历史，不默认继承全部历史。独立审查始终无实现历史。
-- 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入 slot 和临时目录规则。
+- 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入当前环境适用的资源调度和临时目录规则。
 - 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守下文 fresh 规则。
 - 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。七个角色均设置 `[agents] enabled = false`，并以新会话实际工具可用性确认生效。
 - 派发后 Root 先做不依赖该结果的工作；只有下一步确实依赖未完成结果时才等待。结果到达即处理；超时后评估进展、缩小范围或接手，不机械循环等待。独立工作仍须遵守唯一写入者规则。
@@ -48,7 +48,7 @@
 5. 有实质行为变化时冻结中性证据并启动 fresh Reviewer；普通文案或明确机械配置调整无需自动进入完整审查流程。项目要求优先。必需 strict gate 时必须使用下文的只读父 launcher，并确认实际运行时权限；同一父会话中的行为约束审查不能替代 strict gate。Root 根据证据作最终判断。REQUEST_CHANGES 进入有边界的纠正轮次；BLOCKED 先解决证据或环境缺口。
 6. 接受前再次采集状态，确认审查对象没有漂移。汇报实际完成、验证和限制。
 
-最终 gate 前由 Root 检查当前范围/快照、写入停止、该 gate 所需的前置测试与真实运行证据、旧 findings 处理状态以及隔离要求。根据本轮实际改动检查已经观察到的失败面：权限/资源限额及开放文件描述符、取消与授权撤销、继承上下文与后续输入入口、首次持久化及崩溃恢复。只选择与当前范围有关的项，为它们提供已有验证证据；不要把这份提示变成所有项目必跑的新增测试清单。修正轮次随包提供上轮 finding、对应变更、当前验证及保留限制的简短映射。代码审查可在全部运行证据就绪前进行，但必须标为 `review_kind=code`，不能当作整体验收。slot、权限或宿主缺口先由有执行条件的验证阶段处理；同一范围、快照及证据缺口均未改变时，不重复启动最终 gate。当前 gate 自身产生的权限探针和 verdict 不是它自己的前置条件；需要 strict 时通过相应入口产生证据。
+最终 gate 前由 Root 检查当前范围/快照、写入停止、该 gate 所需的前置测试与真实运行证据、旧 findings 处理状态以及隔离要求。根据本轮实际改动检查已经观察到的失败面：权限/资源限额及开放文件描述符、取消与授权撤销、继承上下文与后续输入入口、首次持久化及崩溃恢复。只选择与当前范围有关的项，为它们提供已有验证证据；不要把这份提示变成所有项目必跑的新增测试清单。修正轮次随包提供上轮 finding、对应变更、当前验证及保留限制的简短映射。代码审查可在全部运行证据就绪前进行，但必须标为 `review_kind=code`，不能当作整体验收。资源调度、权限或宿主缺口先由有执行条件的验证阶段处理；同一范围、快照及证据缺口均未改变时，不重复启动最终 gate。当前 gate 自身产生的权限探针和 verdict 不是它自己的前置条件；需要 strict 时通过相应入口产生证据。
 
 对任务结果解析、用量核算或沙箱目录相关修改，把已知失败面前移到实现者的验收场景：缺失/空/嵌套子结果、缺失退出或用量证据、父子身份不匹配，以及路径别名/挂载别名下的实际写入边界。只检查与本轮改动相关的场景；普通应用任务不继承整张清单。已有测试已覆盖时引用它们，不再重复执行。修复一个 finding 时同时检查同一假设的相邻输入形态，避免每轮只补一个例子；每个仍未关闭的 finding 必须有当前状态和对应验证位置。第一次审查仍提供中性任务与事实，不把 Root 的预判当 Reviewer 结论。
 
@@ -67,7 +67,7 @@ python3 @@CODEX_HOME_SHELL@@/review-workflow.py prepare --spec spec.json --outpu
 python3 @@CODEX_HOME_SHELL@@/review-workflow.py check review-round-1
 ```
 
-输出目录必须不存在，父目录必须已存在。工具流式计算文件哈希、生成 snapshot.json，再按该文件的实际字节计算 snapshot_id，生成 request.json、brief.md 和 workflow.json。派发普通 Reviewer 前 check 成功后，将完整 request.json 原样交给 fresh Reviewer。strict 使用下文 launcher 的目录入口。check 在派发前和接收时检查控制文件绑定及全部已声明文件的内容哈希，包括未变化基线；大文件/大量网络盘读取仍按 slot 规则执行，不以“预检”名义绕过资源限制。
+输出目录必须不存在，父目录必须已存在。工具流式计算文件哈希、生成 snapshot.json，再按该文件的实际字节计算 snapshot_id，生成 request.json、brief.md 和 workflow.json。派发普通 Reviewer 前 check 成功后，将完整 request.json 原样交给 fresh Reviewer。strict 使用下文 launcher 的目录入口。check 在派发前和接收时检查控制文件绑定及全部已声明文件的内容哈希，包括未变化基线；大文件/大量网络盘读取仍按当前环境的资源规则执行，不以“预检”名义绕过资源限制。
 
 prepare 前确认实现者、测试及后台日志写入均已停止；已冻结的 spec、验证日志和源文件在本轮 receive 完成前不得继续修改。持续追加的日志应在写入结束后保存本轮独立证据文件，并将原始日志位置保留为来源。receive 的状态输出和后续运行日志不能写回本轮绑定输入。遇到 `file_stability` 诊断时保存 path/fd 前后元数据及 changed_fields；这些字段只说明观察到的变化，不能证明具体写入者或内容变更。先核对写入停止和文件系统状态，不循环重试、不关闭 inode/mtime/ctime 校验。若实际内容或范围变化，建立新快照并 fresh review；确认内容未变且原错误仅为暂态文件状态后，才对原包再做一次完整 check/receive，并保留失败证据。
 
@@ -190,18 +190,18 @@ Explorer、Locator、Reviewer 的配置默认 read-only；Worker、Validator 默
 
 需要文件系统隔离的 strict 审查必须使用全局安装的独立只读父入口。新包 spec 必填 `budget` 对象：正整数 `timeout_seconds`、正整数 `review_seconds` 和非空 `reason`。总时限至多 86400 秒，且至少给父入口预留 60 秒；Root 根据范围与近期同类样本确定预算，不把最低预留量当作足够的性能承诺。review_seconds 是子审查的 advisory 评估点，timeout_seconds 由外部 watchdog 执行。9/22 已完成父子配对的额外耗时中位数约 133 秒，仅作安排预算参考，不代表每次固定开销。示例 900/660 不是新的全局默认。
 
-严格 CLI 审查通常超过一分钟；先运行 slot audit 和 slot status，将输出写入项目日志并检查资源冲突，再从被审查项目 cwd 经 slot cpu 执行。原始结果及阶段时间保留在全新目录中：
+严格 CLI 审查启动前，按当前环境的用户级和项目级 AGENTS.md 完成所需的资源检查与日志记录，再从被审查项目 cwd 执行。以下示例展示审查入口命令；若适用规则要求资源调度工具，实际执行时必须按规则包装命令。原始结果及阶段时间保留在全新目录中：
 
 ```sh
-slot cpu -- bash @@CODEX_HOME_SHELL@@/review-readonly.sh review-round-1 --artifacts review-run-1 > review-events.jsonl 2> review-stderr.log
+bash @@CODEX_HOME_SHELL@@/review-readonly.sh review-round-1 --artifacts review-run-1 > review-events.jsonl 2> review-stderr.log
 ```
 
-新包入口使用已冻结的 budget，不接受与其不一致的环境时限。完成后用 review-run-1/final.txt 调用 receive；非零退出先处理失败，不提交 final PASS。timing.jsonl 记录外层预检、模型运行、结果校验等阶段，不把它冒充子代理耗时或 slot 排队时间。超时后先确认终止、检查已有覆盖与剩余工作，缩小合理范围或在新包中记录调整后的预算及原因；禁止同包盲目循环重试或全局加大时限来掩盖问题。
+新包入口使用已冻结的 budget，不接受与其不一致的环境时限。完成后用 review-run-1/final.txt 调用 receive；非零退出先处理失败，不提交 final PASS。timing.jsonl 记录外层预检、模型运行、结果校验等阶段，不把它冒充子代理耗时或资源调度排队时间。超时后先确认终止、检查已有覆盖与剩余工作，缩小合理范围或在新包中记录调整后的预算及原因；禁止同包盲目循环重试或全局加大时限来掩盖问题。
 
 已经启动的兼容流程可继续传 JSON 文件（默认外部时限仍为 600 秒），也可使用 --artifacts 保留结果：
 
 ```sh
-slot cpu -- bash @@CODEX_HOME_SHELL@@/review-readonly.sh /path/to/review-request.json > /path/to/review-events.jsonl
+bash @@CODEX_HOME_SHELL@@/review-readonly.sh /path/to/review-request.json > /path/to/review-events.jsonl
 ```
 
 入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
@@ -214,11 +214,11 @@ Codex Root 在每个 Root 会话首次执行原生 Codex 实现、验证或独�
 
 保留现有七个角色及模型分配，不新增通用 default。复杂调用链或高风险审查是否升级模型/effort，由 Root 根据任务证据和同类任务表现决定；固定角色参数不能假定被 spawn 参数覆盖。另有 `lazycodex-*` 角色时，只在对应工作流调用，不默认与 Astra 的验证、审查重复叠加；项目明确要求的门禁不得省略。
 
-全局审查脚本 `review-readonly.sh`、`run-bounded.py`、`review-contract.py`、`review-workflow.py` 必须保持在 `@@CODEX_HOME@@/` 中。入口以当前项目目录保存临时请求和末条消息并在退出时清理，不使用 `/tmp`。始终从被审查项目 cwd 调用审查入口，由该 cwd 决定加载的项目配置。
+全局审查脚本 `review-readonly.sh`、`run-bounded.py`、`review-contract.py`、`review-workflow.py` 必须保持在 `@@CODEX_HOME@@/` 中。入口以当前项目目录保存临时请求和末条消息并在退出时清理。始终从被审查项目 cwd 调用审查入口，由该 cwd 决定加载的项目配置。
 
 项目配置可能覆盖用户级配置，同名角色的不同版本不能假设会合并。配置层级、provider 或宿主版本变化后，重新确认实际加载的角色、模型、effort 和权限；以实际元数据和工具结果为证据，不采信模型自述。不批量提升项目的信任级别。区分静态检查、实际运行和未验证能力；安装成功不等于严格只读隔离已经验证。
 
-遵循用户级和项目级的资源约束。预计超过一分钟、内存超过 2G 或大量读写 /data_0 的命令必须走 slot；启动前运行 slot audit 和 slot status 并将输出写入项目日志。不擅自终止其他任务或扩大槽位。中间文件放在经确认的任务目录，必要时使用 /project/tmp，禁止使用 /tmp。将这些约束显式纳入相关子任务的 Context。
+资源调度工具、重任务阈值、启动前检查、日志要求和临时目录限制由当前环境的用户级及项目级 AGENTS.md 定义，本协议不固定机器专属工具、阈值或路径。Root 遵循适用规则，并将具体约束显式纳入相关子任务的 Context；子角色不应依赖隐式继承。本地规则要求的工具不可用时，报告具体规则来源及尚未执行的检查，不把未运行记为检查失败。不擅自终止其他任务或扩大资源额度。
 
 ## 参考
 
