@@ -21,7 +21,8 @@ STATE = ".codex-agent-kit.json"
 BEGIN = "<!-- codex-agent-kit:begin -->"
 END = "<!-- codex-agent-kit:end -->"
 HELPERS = ("review-workflow.py", "review-contract.py", "review-readonly.sh",
-           "run-bounded.py", "work-package-metrics.py")
+           "run-bounded.py", "work-package-metrics.py", "context-state.py")
+
 # Codex 0.160.1 multi_agent_v2 reports tool_name collaborationspawn_agent.
 # Matchers ^Agent$ and ^spawn_agent$ were tested and did not fire (issue #4),
 # so they are not installed and are not treated as aliases.
@@ -291,7 +292,7 @@ def plan_hook_installation(target: Path, parsed_config: dict, merged_config: dic
 def instruction_text(old: str, target: Path) -> str:
     block = (f"{BEGIN}\n## Native Codex delegation\n\n"
              f"Codex Root 在委派实现、验证或独立审查前，读取 `{target}/astra-planner.md`，"
-             "并使用 `astra_*` 角色；当前上下文已有时复用。协议变化或上下文压缩丢失关键规则时补读。"
+             "按入口只读取本轮所需的专项协议，并使用 `astra_*` 角色；当前上下文已有时复用。协议变化或上下文压缩丢失关键规则时补读。"
              "普通问答不触发完整委派流程。子 agent 不读该协议，按 Root 的自包含 TaskSpec 执行。"
              "目标项目的 AGENTS.md 提供项目约束。\n"
              f"{END}")
@@ -303,7 +304,53 @@ def instruction_text(old: str, target: Path) -> str:
     return old + ("\n\n" if old else "") + block + "\n"
 
 
-def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = False) -> tuple[dict, dict]:
+CONTEXT_HOOK_MARKER = "codex-agent-kit: context recovery"
+
+
+def context_hooks(document: dict, registration: dict | None, previous: dict,
+                  overwrite: bool) -> bool:
+    if not isinstance(document, dict) or not isinstance(document.get("hooks", {}), dict):
+        raise ValueError("Invalid hooks document")
+    before = copy.deepcopy(document)
+    hooks = document.setdefault("hooks", {})
+    groups = hooks.get("SessionStart", [])
+    if not isinstance(groups, list):
+        raise ValueError("Invalid SessionStart hooks")
+    found = []
+    preserved = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            raise ValueError("Invalid hook group")
+        remaining = []
+        for handler in group["hooks"]:
+            if not isinstance(handler, dict):
+                raise ValueError("Invalid hook handler")
+            if handler.get("statusMessage") == CONTEXT_HOOK_MARKER:
+                found.append({**group, "hooks": [handler]})
+            else:
+                remaining.append(handler)
+        if remaining or not group["hooks"]:
+            preserved.append({**group, "hooks": remaining})
+    if len(found) > 1:
+        raise ValueError("Duplicate context recovery handlers; reconcile manually")
+    expected = previous.get("registration") if previous.get("enabled") else None
+    actual = found[0] if found else None
+    if expected is not None and actual != expected and actual != registration and not overwrite:
+        raise ValueError("Local edit detected: context recovery hook; use --overwrite-local to replace after backup")
+    if expected is None and actual is not None and actual != registration and not overwrite:
+        raise ValueError("Local edit detected: conflicting context recovery hook")
+    if registration is not None:
+        # Keep the original position and group bytes for a true no-op update.
+        if actual == registration:
+            return False
+        preserved.append(registration)
+    if "SessionStart" in hooks or registration is not None:
+        hooks["SessionStart"] = preserved
+    return document != before
+
+
+def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = False,
+         context_recovery: bool | None = None) -> tuple[dict, dict]:
     desired = {}
     observed = {}
 
@@ -313,12 +360,17 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
             observed[rel] = read_file(target / rel)
         return observed[rel]
 
+    state_bytes = capture(STATE)
+    previous = json.loads(state_bytes) if state_bytes else {"files": {}}
+    prior_context = previous.get("context_recovery", {})
+    context_enabled = prior_context.get("enabled", False) if context_recovery is None else context_recovery
+    context_state = {"enabled": context_enabled}
     roles = sorted((BUNDLE / "agents").glob("*.toml"))
     if not roles:
         raise ValueError("Bundle has no roles")
     settings = tomllib.loads((BUNDLE / "config.toml").read_text())
     if "hooks" in settings:
-        raise ValueError("Bundle config.toml must not contain hooks; install.py merges the spawn hook")
+        raise ValueError("Bundle config.toml must not contain hooks; install.py merges managed hooks")
     registrations = settings.setdefault("agents", {})
     for role in roles:
         data = role.read_bytes()
@@ -333,15 +385,32 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
         if name.endswith(".py"):
             compile(data, name, "exec")
         desired[name] = data
-    desired["astra-planner.md"] = (BUNDLE / "astra-planner.md").read_text().replace(
-        "@@CODEX_HOME_SHELL@@", shlex.quote(str(target))).replace(
-        "@@CODEX_HOME@@", str(target)).encode()
+    manifest_name = "protocols/manifest.json"
+    manifest_data = (BUNDLE / manifest_name).read_bytes()
+    manifest = json.loads(manifest_data)
+    protocol_files = manifest.get("files") if isinstance(manifest, dict) else None
+    if (not isinstance(manifest, dict) or manifest.get("version") != 1
+            or not isinstance(protocol_files, list) or not protocol_files
+            or any(not isinstance(name, str) for name in protocol_files)
+            or len(protocol_files) != len(set(protocol_files))
+            or "astra-planner.md" not in protocol_files):
+        raise ValueError("Invalid protocol manifest")
+    desired[manifest_name] = manifest_data
+    for name in protocol_files:
+        parts = name.split("/")
+        if name != "astra-planner.md" and not (
+                len(parts) == 2 and parts[0] == "protocols"
+                and parts[1] not in (".", "..") and parts[1].endswith(".md")
+                and "\\" not in name):
+            raise ValueError(f"Invalid protocol path: {name}")
+        desired[name] = (BUNDLE / name).read_text().replace(
+            "@@CODEX_HOME_SHELL@@", shlex.quote(str(target))).replace(
+            "@@CODEX_HOME@@", str(target)).encode()
+
+    desired["templates/task-state.json"] = (BUNDLE / "templates/task-state.json").read_bytes()
     hook_script = (BUNDLE / HOOK_SCRIPT).read_bytes()
     compile(hook_script, HOOK_SCRIPT, "exec")
     desired[HOOK_SCRIPT] = hook_script
-
-    state_bytes = capture(STATE)
-    previous = json.loads(state_bytes) if state_bytes else {"files": {}}
     for rel, data in desired.items():
         current = capture(rel)
         prior_hash = previous["files"].get(rel)
@@ -354,13 +423,66 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
     parsed_config = tomllib.loads(old_config.decode())
     merged_config = copy.deepcopy(parsed_config)
     merge(merged_config, settings)
+    if context_enabled or prior_context.get("enabled", False):
+        hook_bytes = capture("hooks.json")
+        inline_hooks = merged_config.get("hooks", {})
+        json_document = json.loads(hook_bytes or b'{"hooks": {}}')
+        if not isinstance(inline_hooks, dict) or not isinstance(json_document, dict):
+            raise ValueError("Invalid hooks configuration")
+        json_hooks = json_document.get("hooks", {})
+        if not isinstance(json_hooks, dict):
+            raise ValueError("Invalid hooks document")
+
+        def owns_handler(events):
+            groups = events.get("SessionStart", [])
+            if not isinstance(groups, list):
+                raise ValueError("Invalid SessionStart hooks")
+            return any(isinstance(group, dict) and isinstance(group.get("hooks"), list)
+                       and any(isinstance(handler, dict) and handler.get("statusMessage") == CONTEXT_HOOK_MARKER
+                               for handler in group["hooks"]) for group in groups)
+
+        owners = [name for name, events in (("config.toml", inline_hooks), ("hooks.json", json_hooks))
+                  if owns_handler(events)]
+        if len(owners) > 1:
+            raise ValueError("Duplicate context recovery handlers in both hook sources; reconcile manually")
+        inline_events = any(key in inline_hooks for key in (
+            "SessionStart", "SessionEnd", "PreCompact", "PostCompact", "PreToolUse", "PostToolUse",
+            "PermissionRequest", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"))
+        if prior_context.get("enabled"):
+            source = prior_context.get("source")
+            if source not in ("config.toml", "hooks.json") or (owners and owners[0] != source):
+                raise ValueError("Context recovery hook source changed; reconcile the previous registration first")
+        else:
+            source = owners[0] if owners else ("config.toml" if inline_events and hook_bytes is None else "hooks.json")
+        inline = source == "config.toml"
+        document = {"hooks": inline_hooks} if inline else json_document
+        command = shlex.join([sys.executable, str(target / "context-state.py"), "hook"])
+        registration = {"matcher": "^(startup|resume|compact)$", "hooks": [{
+            "type": "command", "command": command, "timeout": 10,
+            "statusMessage": CONTEXT_HOOK_MARKER, "additionalContextLimit": 5000}]}
+        changed = context_hooks(document, registration if context_enabled else None,
+                                prior_context, overwrite_local)
+        if inline:
+            merged_config["hooks"] = document["hooks"]
+        elif changed or hook_bytes is not None:
+            desired["hooks.json"] = ((json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode()
+                                     if changed else hook_bytes)
+        if context_enabled:
+            merged_config.setdefault("features", {})["hooks"] = True
+            context_state.update(source=source, registration=registration)
+    # Merge into the context hook's planned document, retaining the original
+    # capture for apply's concurrent-edit checks. Both modules share these files.
+    def capture_planned(rel: str) -> bytes | None:
+        return desired[rel] if rel in desired else capture(rel)
+
     hooks_json_bytes, hooked_config = plan_hook_installation(
-        target, parsed_config, merged_config, capture, previous, overwrite_local)
-    config_body = hooked_config if hooked_config is not None else merged_config
-    desired["config.toml"] = (old_config if toml_value(config_body) == toml_value(parsed_config)
-                              else dump_toml(config_body).encode())
+        target, merged_config, merged_config, capture_planned, previous, overwrite_local)
+    if hooked_config is not None:
+        merged_config = hooked_config
     if hooks_json_bytes is not None:
         desired[HOOKS_JSON] = hooks_json_bytes
+    desired["config.toml"] = (old_config if toml_value(merged_config) == toml_value(parsed_config)
+                              else dump_toml(merged_config).encode())
 
     instruction_name = None
     if not skip_instructions:
@@ -368,13 +490,11 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
         instruction_name = "AGENTS.override.md" if override and override.strip() else "AGENTS.md"
         old_instructions = (capture(instruction_name) or b"").decode()
         desired[instruction_name] = instruction_text(old_instructions, target).encode()
-    # config.toml, hooks.json, and global instructions are shared with local edits.
-    # The managed hook group is tracked by its own hash so unrelated user hooks
-    # are not treated as drift of a managed file.
+    # Shared configuration is tracked by managed registration, not whole-file hashes.
     managed = {rel: digest(data) for rel, data in desired.items()
-               if rel not in ("config.toml", HOOKS_JSON, instruction_name)}
-    group_hash = digest(canonical_json(desired_hook_group(target)))
-    state = {"version": 1, "files": managed, "hook_groups": {HOOK_GROUP_STATE: group_hash}}
+               if rel not in ("config.toml", "hooks.json", instruction_name)}
+    state = {"version": 1, "files": managed, "context_recovery": context_state,
+             "hook_groups": {HOOK_GROUP_STATE: digest(canonical_json(desired_hook_group(target)))}}
     desired[STATE] = (json.dumps(state, indent=2) + "\n").encode()
     old = {rel: capture(rel) for rel in desired}
     return desired, old
@@ -460,18 +580,26 @@ def main() -> int:
     parser.add_argument("--target", type=Path, help="default: CODEX_HOME or ~/.codex")
     parser.add_argument("--overwrite-local", action="store_true", help="replace edited managed files after backup")
     parser.add_argument("--skip-instructions", action="store_true", help="leave global instructions untouched; maintain the planner entry yourself")
+    context = parser.add_mutually_exclusive_group()
+    context.add_argument("--with-context-recovery", dest="context_recovery", action="store_const", const=True,
+                         help="enable task-state recovery hooks; future updates remember this choice")
+    context.add_argument("--without-context-recovery", dest="context_recovery", action="store_const", const=False,
+                         help="remove only the kit recovery hook, retaining scripts and task data")
+    parser.set_defaults(context_recovery=None)
     args = parser.parse_args()
     target = (args.target or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")).expanduser().absolute()
     if "\n" in str(target) or "\r" in str(target):
         parser.error("Target path cannot contain newlines")
     try:
-        desired, old = plan(target, args.overwrite_local, args.skip_instructions)
+        desired, old = plan(target, args.overwrite_local, args.skip_instructions, args.context_recovery)
         changed = [rel for rel in desired if desired[rel] != old[rel]]
         print(f"Target: {target}")
         if args.skip_instructions:
             print("Global instruction entry excluded; maintain the astra-planner.md entry yourself.")
         for rel in changed:
             print(f"{'UPDATE' if old[rel] is not None else 'CREATE'} {rel}")
+        if json.loads(desired[STATE])["context_recovery"]["enabled"]:
+            print("Context recovery: ENABLED; runtime hook trust and event execution: NOT CHECKED (review /hooks in Codex)")
         if args.check:
             print(f"{'CHECK FAIL' if changed else 'CHECK PASS'}: {len(changed)} files need updating")
             return 1 if changed else 0

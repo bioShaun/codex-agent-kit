@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "files": [
+    "astra-planner.md",
+    "protocols/context-recovery.md",
+    "protocols/delegation.md",
+    "protocols/environment.md",
+    "protocols/execution.md",
+    "protocols/review.md",
+    "protocols/tasks.md"
+  ]
+}

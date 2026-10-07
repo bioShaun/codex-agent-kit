@@ -6,3 +6,6 @@ __pycache__/
 .env.*
 auth.json
 backups/
+
+# Local task checkpoints and session bindings
+/.codex-task-state/

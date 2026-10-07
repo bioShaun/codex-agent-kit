@@ -2,7 +2,7 @@
 
 将当前 Codex subagent 角色、调度协议和审查工具放在 Git 中维护，让多台机器使用同一套配置，也可以直接在 GitHub 网页或云端开发环境修改后同步。
 
-包含 7 个 Astra 角色、4 个 LazyCodex 角色、调度协议、5 个辅助脚本，以及一条把子代理 `fork_turns` 改写为 `none` 的 PreToolUse hook。配置源是 `bundle/`；请在这里修改，提交后在各机器拉取并安装。
+包含 7 个 Astra 角色、4 个 LazyCodex 角色、按需读取的调度协议、6 个辅助脚本，以及把子代理 `fork_turns` 改写为 `none` 的 PreToolUse hook。配置源是 `bundle/`；请在这里修改，提交后在各机器拉取并安装。
 
 ## 安装
 
@@ -22,13 +22,13 @@ python3 install.py --check     # 0=已同步，1=待更新，2=配置/环境错�
 python3 install.py --target /path/to/codex-home --apply
 ```
 
-安装后新开 Codex 主会话，确认角色列表和实际子会话的模型、effort，并在 `/hooks` 里信任一次 `force_fork_turns_none.py`。信任绑定当前 hook 定义的哈希；定义变化后要重新信任。安装检查只证明文件及配置同步，不能证明某台机器的模型账号有权限，也不能证明实际运行时只读隔离，也不能代替这次信任。
+安装后新开 Codex 主会话，确认角色列表和实际子会话的模型、effort，并在 `/hooks` 信任 `force_fork_turns_none.py`。安装检查只证明文件及配置同步，不能证明某台机器的模型账号有权限，也不能证明实际运行时只读隔离。
 
 若全局 `AGENTS.md` 是多家 agent 共用的符号链接，安装器默认拒绝修改链接。已经在共享指令中配置了 `astra-planner.md` 入口的机器（包括本次配置来源机器），安装、预览和检查时均追加 `--skip-instructions`。没有入口时，应在共享指令来源中手工加入“Codex Root 委派前读取实际安装目录下的 astra-planner.md，使用 astra_* 角色；子 agent 按 TaskSpec 执行”，再使用该选项。
 
 ## 更新与云端编辑
 
-1. 在 GitHub 网页、Codespaces 或本地编辑 `bundle/agents/*.toml`、`bundle/config.toml`、`bundle/hooks/` 或 `bundle/astra-planner.md`，提交到仓库。
+1. 在 GitHub 网页、Codespaces 或本地编辑 `bundle/agents/*.toml`、`bundle/config.toml`、`bundle/hooks/` 或协议入口 `bundle/astra-planner.md`、`bundle/protocols/` 专项协议，提交到仓库。
 2. 各机器在克隆目录运行：
 
    ```sh
@@ -38,7 +38,7 @@ python3 install.py --target /path/to/codex-home --apply
    python3 install.py --check
    ```
 
-3. 新开主会话。进行中的审查绑定了协议和辅助脚本哈希，应先完成再更新。
+3. 新开主会话。进行中的审查绑定了整套协议和辅助脚本哈希，应先完成再更新。旧的单文件协议升级后，原审查包会被拒绝，不能沿用旧哈希冒充当前审查。
 
 本仓库不会后台自动拉取或替你提交本机配置。云端仓库是配置源；每台机器在明确执行安装时更新。首次安装会备份并替换同名角色/脚本；后续安装发现这些文件被本机修改时会拒绝覆盖。优先把修改同步回仓库；确需采用仓库版本时，用 `--overwrite-local --apply`，旧文件仍会备份。
 
@@ -48,11 +48,11 @@ python3 install.py --target /path/to/codex-home --apply
 |---|---|
 | `bundle/agents/*.toml` | 安装全部 11 个角色并显式注册；保留其他角色 |
 | `bundle/config.toml` | 合并其中的审查模型、multi-agent 开关、默认子模型、并发参数 |
-| `bundle/astra-planner.md` | 按实际安装目录替换路径占位符 |
-| 5 个辅助脚本 | 安装到目标目录根部；脚本通过相邻文件定位依赖 |
-| `bundle/hooks/force_fork_turns_none.py` | 安装到 `hooks/`，并把 matcher `^collaborationspawn_agent$` 合并进 `hooks.json` 或已有的内联 `[hooks]` |
+| `bundle/astra-planner.md`、`bundle/protocols/manifest.json` 及其专项协议 | 安装完整协议集，按实际安装目录替换路径占位符；受管文件支持漂移检查和备份 |
+| 6 个辅助脚本 | 安装到目标目录根部；脚本通过相邻文件定位依赖 |
+| `bundle/hooks/force_fork_turns_none.py` | 安装到 `hooks/`，把受管 PreToolUse 条目合并进已有 hook 配置 |
 | 全局指令 | 更新带标记的简短入口；非空 `AGENTS.override.md` 优先，否则使用 `AGENTS.md` |
-| 本机记录 | `.codex-agent-kit.json` 保存受管文件哈希和这条 hook 的分组哈希，`backups/` 保存每次修改前的版本 |
+| 本机记录 | `.codex-agent-kit.json` 保存受管文件哈希，`backups/` 保存每次修改前的版本 |
 
 已有主模型、provider、登录、API、MCP、插件、权限和项目 trust 配置保持原值。首次合并需要修改 `config.toml` 时，会重新序列化 TOML：**值保留，注释与格式不保留**，原文在备份中；配置已经一致时不重写文件。输出只列文件名，不打印配置或密钥。
 
@@ -69,6 +69,22 @@ python3 install.py --target /path/to/codex-home --apply
 默认子模型为 `gpt-6.1-sol/medium`，审查模型为 `gpt-6.1-sol`。LazyCodex 角色仅用于相应工作流；其技能/`omo` 等外部工具不随此仓库安装。
 
 资源调度、重任务阈值和临时目录规则由各机器的用户级及项目级 `AGENTS.md` 维护。调度协议和角色遵循当前环境的适用规则，由 Root 在 TaskSpec 中显式传给子代理；本仓库不统一要求安装特定调度工具。测试只使用本仓库 `.work/` 下的小型隔离目录。
+
+## 协议按需读取
+
+`astra-planner.md` 是短入口：普通问答不加载专项协议；委派读取角色路由与 TaskSpec；实施和验证读取执行协议；独立审查才加载完整的审查契约。专项协议通过相对链接定位，安装到不同用户名、目录或服务器时保持可用。
+
+`protocols/manifest.json` 是受管协议清单。新增专项文件时同时更新清单和入口路由。审查工具对清单本身、入口及全部列出的文件计算组合哈希，避免只修改专项规则却仍接受旧审查包。工具读取文件校验版本，不等于要求模型通读所有协议。缺少清单或任何列出的文件时校验失败。
+
+长任务 compact 恢复模块可用现有安装器部署：
+
+```sh
+python3 install.py --with-context-recovery                 # 预览
+python3 install.py --with-context-recovery --apply         # 备份并安装
+python3 install.py --check                                # 后续检查会记住模块已启用
+```
+
+共享全局 AGENTS.md 的符号链接环境继续加 `--skip-instructions`。安装后在 Codex `/hooks` 信任恢复 hook，并新开会话。完整步骤和任务状态用法见 [上下文恢复部署](docs/context-recovery.md)。脚本与协议随仓库同步，任务状态留在对应项目内，不随配置部署搬运。
 
 ## 子代理 fork_turns 护栏
 

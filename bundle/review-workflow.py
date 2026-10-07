@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 EXIT_ERROR = 2
-REVISION = "1"
+REVISION = "2"
 LIMITATION = (
     "This helper detects bound-file drift and contract errors; it cannot intercept callers "
     "that bypass it and does not prove host enforcement, reviewer independence, or acceptance."
@@ -162,11 +162,34 @@ def load_contract():
     return module
 
 
+def protocol_hash() -> str:
+    """Bind all policy modules, including the declaration of their membership."""
+    manifest_name = "protocols/manifest.json"
+    protocol_root = sibling("astra-planner.md").parent
+    raw = regular_bytes(protocol_root / manifest_name, "protocol manifest")
+    manifest = load_json_bytes(raw, "protocol manifest")
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if (not isinstance(manifest, dict) or manifest.get("version") != 1
+            or not isinstance(files, list) or not files
+            or any(not isinstance(name, str) for name in files)
+            or len(files) != len(set(files)) or "astra-planner.md" not in files):
+        raise WorkflowError("invalid protocol manifest")
+    hashes = {manifest_name: sha_bytes(raw)}
+    for name in files:
+        parts = name.split("/")
+        if name != "astra-planner.md" and not (
+                len(parts) == 2 and parts[0] == "protocols"
+                and parts[1] not in (".", "..") and parts[1].endswith(".md")
+                and "\\" not in name):
+            raise WorkflowError(f"invalid protocol path: {name}")
+        hashes[name] = file_hash(protocol_root / name, f"protocol module {name}")
+    return sha_bytes(json.dumps(hashes, sort_keys=True, separators=(",", ":")).encode())
+
+
 def current_revisions() -> dict[str, str]:
-    protocol = sibling("astra-planner.md")
     dependency = sibling("review-contract.py")
     return {
-        "protocol_sha256": file_hash(protocol, "protocol"),
+        "protocol_sha256": protocol_hash(),
         "helper_sha256": file_hash(Path(__file__).resolve(), "workflow helper"),
         "helper_revision": REVISION,
         "dependency_sha256": file_hash(dependency, "validator dependency"),
@@ -690,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "status":
             revisions = current_revisions()
-            output = {**revisions, "refresh_requirement": "Read the current protocol, then pass this protocol_sha256 to prepare; the token detects stale callers but does not prove it was read.", "host_enforcement": False, "limitations": [LIMITATION]}
+            output = {**revisions, "refresh_requirement": "Read the planner entry and task-relevant protocol modules, then pass this protocol_sha256 to prepare; the token detects stale callers but does not prove it was read.", "host_enforcement": False, "limitations": [LIMITATION]}
         elif args.command == "prepare": output = prepare(args)
         elif args.command == "check": output = check_package(Path(args.package))
         else: output = receive(args)
