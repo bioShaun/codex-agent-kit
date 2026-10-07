@@ -31,6 +31,7 @@
 - 确认值得委派后，先按任务契约选择最窄的足够角色：已知名称/路径的事实定位用 Locator；命令、断言和环境均明确的确定性检查用 Validator；转换规则、文件范围和排除项完整的机械修改用 Worker-fast。仅当需要跨文件关系推理、行为实现或多阶段 host/证据归因时，分别用 Explorer、Worker、Validator-complex。不要因为已有 Sol 线程可复用，就把新的简单任务默认派给它；也不要为使用 Luna 把一个完整复杂任务拆成更多串行调用。
 - 轻角色遇到歧义或缺少前提，回传具体缺口，由 Root 补全或升级，不让它自行扩大范围。首次采用轻角色的同类任务，保留实际 model/effort、结果和返工事实；完成较小的一批工作包后再决定扩大范围。轻模型不可用时按既有规则报告阻碍；不为凑比例降级审查或更改角色模型。无需为路由另建报告，TaskSpec 一句话说明选择理由即可。
 - 使用当前宿主实际暴露的子代理工具和 `astra_*` 角色，不要求特定工具名（如 `create_thread`）。所有委派默认显式使用 `fork_turns="none"`；其他宿主使用对应的无历史机制。仅在连续对话确有必要且工具支持时使用有限历史，不默认继承全部历史。独立审查始终无实现历史。
+- 用户级 PreToolUse hook `hooks/force_fork_turns_none.py` 会在已验证的 `collaborationspawn_agent` 调用上把 `fork_turns` 改写为 `"none"`（已经是 `"none"` 则不改）。这是护栏，不是隔离：安装后必须在 `/hooks` 按当前定义信任一次。Codex 0.160.1 `multi_agent_v2` 上 matcher 是 `^collaborationspawn_agent$`；`^Agent$` 和 `^spawn_agent$` 实测不触发，不能当成别名。见 [issue #4](https://github.com/bioShaun/codex-agent-kit/issues/4)。协议仍要求 Root 显式传入 `fork_turns="none"`。
 - 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入当前环境适用的资源调度和临时目录规则。
 - 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守下文 fresh 规则。用 `followup_task` 复用 Worker 或 Validator 后，任何写入前先确认其写权限；若已被降级，则改为新建代理（[openai/codex#40278](https://github.com/openai/codex/issues/40278) 仍开放：曾把全权限子代理重置为 read-only/on-request，报告于 codex-cli 0.149.0-alpha.4.1，尚未在 0.160.1 验证）。
 - 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。禁止再派生是行为规则。七个角色文件中的 `[agents] enabled = false` 与 `sandbox_mode` 只是声明，Codex `rust-v0.160.1` 不会把这些键应用到子代理；子代理继承父会话权限。严格只读隔离来自 `review-readonly.sh`。
@@ -226,6 +227,7 @@ Codex Root 在每个 Root 会话首次执行原生 Codex 实现、验证或独�
 
 - [OpenAI Subagents 文档](https://learn.chatgpt.com/docs/agent-configuration/subagents)
 - [OpenAI 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)
+- [OpenAI Hooks](https://developers.openai.com/codex/hooks)
 
 源码核对基线：Codex `rust-v0.160.1`。以下链接用于区分版本实现与通用文档说明；源码核对不能替代目标宿主的运行时权限验证。
 

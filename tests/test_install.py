@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -257,6 +258,223 @@ empty = {}
         planner = (self.target / "astra-planner.md").read_text()
         self.assertNotIn("@@CODEX_HOME", planner)
         self.assertIn(f"python3 '{self.target}'/review-workflow.py", planner)
+
+    def hook_group(self, document: dict) -> dict:
+        groups = [group for group in document["hooks"]["PreToolUse"]
+                  if group.get("matcher") == installer.SPAWN_MATCHER]
+        self.assertEqual(len(groups), 1)
+        return groups[0]
+
+    def assert_managed_command(self, command: str):
+        parts = shlex.split(command)
+        self.assertEqual(parts[0], "python3")
+        self.assertEqual(Path(parts[1]), (self.target / installer.HOOK_SCRIPT).absolute())
+
+    def test_fresh_install_writes_spawn_hook(self):
+        desired, old = installer.plan(self.target)
+        self.assertIn(installer.HOOK_SCRIPT, desired)
+        self.assertIn(installer.HOOKS_JSON, desired)
+        self.assertIsNone(old[installer.HOOKS_JSON])
+        self.assertFalse(self.target.exists())
+        self.install()
+        script = self.target / installer.HOOK_SCRIPT
+        self.assertEqual(script.read_bytes(), (ROOT / "bundle" / installer.HOOK_SCRIPT).read_bytes())
+        document = json.loads((self.target / "hooks.json").read_text())
+        group = self.hook_group(document)
+        self.assertEqual(group["matcher"], "^collaborationspawn_agent$")
+        hook = group["hooks"][0]
+        self.assertEqual(hook["type"], "command")
+        self.assertEqual(hook["timeout"], 10)
+        self.assertNotIn("async", hook)
+        self.assert_managed_command(hook["command"])
+        self.assertNotIn("collaborationspawn_agent", (self.target / "config.toml").read_text())
+        state = json.loads((self.target / installer.STATE).read_text())
+        self.assertIn(installer.HOOK_SCRIPT, state["files"])
+        self.assertNotIn("hooks.json", state["files"])
+        self.assertIn(installer.HOOK_GROUP_STATE, state["hook_groups"])
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            input=json.dumps({
+                "hook_event_name": "PreToolUse",
+                "tool_name": "collaborationspawn_agent",
+                "tool_input": {"agent_type": "astra_locator", "task_name": "installed", "message": "hi"},
+            }).encode(),
+            capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        updated = json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]
+        self.assertEqual(updated["fork_turns"], "none")
+        self.assertEqual(updated["message"], "hi")
+
+    def test_hook_install_is_idempotent(self):
+        self.install()
+        hooks = self.target / "hooks.json"
+        script = self.target / installer.HOOK_SCRIPT
+        hooks_bytes = hooks.read_bytes()
+        script_mtime = script.stat().st_mtime_ns
+        hooks_mtime = hooks.stat().st_mtime_ns
+        self.assertIsNone(self.install())
+        self.assertEqual(hooks.read_bytes(), hooks_bytes)
+        self.assertEqual(hooks.stat().st_mtime_ns, hooks_mtime)
+        self.assertEqual(script.stat().st_mtime_ns, script_mtime)
+
+    def test_existing_user_hooks_are_preserved(self):
+        self.target.mkdir()
+        original = {
+            "description": "本地 hooks",
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "^Bash$", "hooks": [{"type": "command", "command": "echo user-bash"}]}
+                ],
+                "Stop": [
+                    {"hooks": [{"type": "command", "command": "echo 停止"}]}
+                ],
+            },
+        }
+        path = self.target / "hooks.json"
+        path.write_text(json.dumps(original, ensure_ascii=False, indent=2) + "\n")
+        self.install()
+        document = json.loads(path.read_text())
+        self.assertEqual(document["description"], "本地 hooks")
+        self.assertEqual(document["hooks"]["Stop"], original["hooks"]["Stop"])
+        self.assertEqual(document["hooks"]["PreToolUse"][0], original["hooks"]["PreToolUse"][0])
+        self.assertEqual(self.hook_group(document)["matcher"], "^collaborationspawn_agent$")
+        self.assertIsNone(self.install())
+        added = json.loads(path.read_text())
+        added["hooks"]["PostToolUse"] = [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": "echo after"}]}
+        ]
+        edited = json.dumps(added, ensure_ascii=False, indent=2) + "\n"
+        path.write_text(edited)
+        self.assertIsNone(self.install())
+        self.assertEqual(path.read_text(), edited)
+        self.assertEqual(json.loads(path.read_text())["hooks"]["PostToolUse"][0]["hooks"][0]["command"],
+                         "echo after")
+
+    def test_local_hook_script_and_config_edits_are_refused(self):
+        self.install()
+        script = self.target / installer.HOOK_SCRIPT
+        script.write_text(script.read_text() + "\n# local\n")
+        with self.assertRaisesRegex(ValueError, "Local edit detected"):
+            installer.plan(self.target)
+        script.write_bytes((ROOT / "bundle" / installer.HOOK_SCRIPT).read_bytes())
+        path = self.target / "hooks.json"
+        document = json.loads(path.read_text())
+        document["hooks"]["PreToolUse"][0]["hooks"][0]["timeout"] = 1
+        document["hooks"]["Stop"] = [{"hooks": [{"type": "command", "command": "echo keep-me"}]}]
+        path.write_text(json.dumps(document, indent=2) + "\n")
+        edited = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "Local edit detected"):
+            installer.plan(self.target)
+        self.assertEqual(path.read_bytes(), edited)
+        desired, old = installer.plan(self.target, overwrite_local=True)
+        backup = installer.apply(self.target, desired, old)
+        self.assertEqual((backup / "hooks.json").read_bytes(), edited)
+        restored = json.loads(path.read_text())
+        self.assertEqual(restored["hooks"]["Stop"][0]["hooks"][0]["command"], "echo keep-me")
+        self.assertEqual(self.hook_group(restored)["hooks"][0]["timeout"], 10)
+        self.assert_managed_command(self.hook_group(restored)["hooks"][0]["command"])
+
+    def test_mixed_handler_group_is_not_replaced(self):
+        self.install()
+        path = self.target / "hooks.json"
+        document = json.loads(path.read_text())
+        document["hooks"]["PreToolUse"][0]["hooks"].append(
+            {"type": "command", "command": "echo user-in-same-group"})
+        path.write_text(json.dumps(document) + "\n")
+        original = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, "reconcile manually"):
+            installer.plan(self.target, overwrite_local=True)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_inline_hooks_receive_the_managed_group_without_hooks_json(self):
+        self.target.mkdir()
+        original = '''model = "my-root-model"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo inline-stop"
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "echo inline-bash"
+'''
+        (self.target / "config.toml").write_text(original)
+        backup = self.install()
+        self.assertFalse((self.target / "hooks.json").exists())
+        self.assertEqual((backup / "config.toml").read_text(), original)
+        parsed = tomllib.loads((self.target / "config.toml").read_text())
+        self.assertEqual(parsed["model"], "my-root-model")
+        self.assertEqual(parsed["hooks"]["Stop"][0]["hooks"][0]["command"], "echo inline-stop")
+        pre = parsed["hooks"]["PreToolUse"]
+        self.assertEqual(pre[0]["matcher"], "^Bash$")
+        self.assertEqual(pre[0]["hooks"][0]["command"], "echo inline-bash")
+        self.assertEqual(pre[1]["matcher"], "^collaborationspawn_agent$")
+        self.assert_managed_command(pre[1]["hooks"][0]["command"])
+        config_mtime = (self.target / "config.toml").stat().st_mtime_ns
+        self.assertIsNone(self.install())
+        self.assertEqual((self.target / "config.toml").stat().st_mtime_ns, config_mtime)
+        self.assertFalse((self.target / "hooks.json").exists())
+
+    def test_hooks_json_and_inline_hooks_are_not_both_rewritten(self):
+        self.target.mkdir()
+        config = '''model = "keep-me"
+
+[[hooks.PreToolUse]]
+matcher = "^Bash$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "echo inline-user"
+'''
+        (self.target / "config.toml").write_text(config)
+        (self.target / "hooks.json").write_text(json.dumps({
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo json-user"}]}]}
+        }, indent=2) + "\n")
+        self.install()
+        parsed = tomllib.loads((self.target / "config.toml").read_text())
+        self.assertEqual(parsed["model"], "keep-me")
+        self.assertEqual(len(parsed["hooks"]["PreToolUse"]), 1)
+        self.assertEqual(parsed["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "echo inline-user")
+        document = json.loads((self.target / "hooks.json").read_text())
+        self.assertEqual(document["hooks"]["Stop"][0]["hooks"][0]["command"], "echo json-user")
+        self.assertEqual(self.hook_group(document)["matcher"], "^collaborationspawn_agent$")
+
+    def test_invalid_hooks_json_does_not_write(self):
+        self.target.mkdir()
+        path = self.target / "hooks.json"
+        path.write_text("{not json")
+        with self.assertRaisesRegex(ValueError, "Invalid hooks.json"):
+            installer.plan(self.target)
+        self.assertEqual([item.name for item in self.target.iterdir()], ["hooks.json"])
+        self.assertEqual(path.read_text(), "{not json")
+        path.write_text("[]")
+        with self.assertRaisesRegex(ValueError, "hooks.json must be a JSON object"):
+            installer.plan(self.target)
+        self.assertEqual(path.read_text(), "[]")
+
+    def test_hooks_json_and_hooks_directory_symlinks_are_refused(self):
+        self.target.mkdir()
+        outside = Path(self.temp.name) / "outside-hooks.json"
+        outside.write_text("{}")
+        (self.target / "hooks.json").symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "Symlink"):
+            installer.plan(self.target)
+        self.assertEqual(outside.read_text(), "{}")
+        (self.target / "hooks.json").unlink()
+        outside_dir = Path(self.temp.name) / "outside-hooks"
+        outside_dir.mkdir()
+        marker = outside_dir / "force_fork_turns_none.py"
+        marker.write_text("untouched")
+        (self.target / "hooks").symlink_to(outside_dir, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "Symlink"):
+            installer.plan(self.target)
+        self.assertEqual(marker.read_text(), "untouched")
 
 
 if __name__ == "__main__":
