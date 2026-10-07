@@ -21,7 +21,7 @@
 
 模型标识必须与实际运行目录对应，不能把 `gpt-5.6` 默认当成 Sol 的可靠别名。角色文件固定模型和 effort；需要升级时由 Root 明确调整配置/角色，不能假设 spawn 参数一定覆盖角色文件。
 
-用户配置的 `max_concurrent_threads_per_session = 4` 是配置值，不保证运行时容量，也不统一规定是否包含 Root；以当前宿主工具声明及实际限制为准。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。接近容量上限或状态不明时查询实际状态；宿主支持释放时才释放已结束线程，否则延后派发。同一容量错误后，在容量或调度条件改变前不重复 spawn 或 followup，也不提高上限；复用已结束线程同样可能占活跃任务容量。相关探索或实现可复用合适的代理，但不得用旧 Reviewer 复用替代修复后的 fresh review。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
+用户配置的 `[agents] max_concurrent_threads_per_session = 4` 不计 Root。Codex 的线程登记只统计已派生子代理，因此该配置值表示最多 4 个并发子代理；它仍不保证运行时容量，以当前宿主工具元数据及实际限制为准。同名的 `features.multi_agent_v2.max_concurrent_threads_per_session` 按包含 Root 的总会话线程计数，不能与本键混用；本仓库未设置该键。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。接近容量上限或状态不明时查询实际状态；宿主支持释放时才释放已结束线程，否则延后派发。同一容量错误后，在容量或调度条件改变前不重复 spawn 或 followup，也不提高上限；复用已结束线程同样可能占活跃任务容量。相关探索或实现可复用合适的代理，但不得用旧 Reviewer 复用替代修复后的 fresh review。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
 
 ## 委派与上下文
 
@@ -31,13 +31,13 @@
 - 使用当前宿主实际暴露的子代理工具和 `astra_*` 角色，不要求特定工具名（如 `create_thread`）。所有委派默认显式使用 `fork_turns="none"`；其他宿主使用对应的无历史机制。仅在连续对话确有必要且工具支持时使用有限历史，不默认继承全部历史。独立审查始终无实现历史。
 - 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入当前环境适用的资源调度和临时目录规则。
 - 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守下文 fresh 规则。
-- 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。七个角色均设置 `[agents] enabled = false`，并以新会话实际工具可用性确认生效。
+- 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。禁止再派生是行为规则。七个角色文件中的 `[agents] enabled = false` 与 `sandbox_mode` 只是声明，当前 Codex 不会把这些键应用到子代理；子代理继承父会话权限。严格只读隔离来自 `review-readonly.sh`。
 - 派发后 Root 先做不依赖该结果的工作；只有下一步确实依赖未完成结果时才等待。结果到达即处理；超时后评估进展、缩小范围或接手，不机械循环等待。独立工作仍须遵守唯一写入者规则。
 - 普通等待默认 30–60 秒，结果可提前返回；hard 截止时不超过 `min(60 秒, 剩余时间)`。窄任务即将完成、停止确认或排错可短等。优化以同类任务的等待调用次数和结果处理延迟衡量，不以 timeout 参数比例或请求时长之和宣称收益。Root 对用户的必要更新频率不因等待策略降低。
 - 通常只回传最终结论、证据和限制。阻塞、重大反证或可解除 Root 依赖的阶段性结论及时发送，不发送固定进度心跳。Root 对用户的必要进度沟通不受此限制。
 - Root 采纳充分、可信的常规证据，不默认重读全部文件或重跑全部检查；重点复核冲突、关键高风险结论和修改后的最终行为。独立审查对指定范围的核实、必要状态采集及项目要求的检查仍须执行。
 
-当前会话宿主示例：`collaboration.spawn_agent` 新建子代理（显式 `fork_turns="none"`），`followup_task` 复用已有代理，`send_message` 发送阶段性信息，`wait_agent` 等待依赖，`interrupt_agent` 发出中断；中断后仍须确认实际停止。当前宿主声明四个总并发槽位，包含 Root，因此最多同时运行三个子代理。此示例不固定其他宿主的名称和容量，每个新会话均以实际工具元数据为准。
+当前会话宿主示例：`collaboration.spawn_agent` 新建子代理（显式 `fork_turns="none"`），`followup_task` 复用已有代理，`send_message` 发送阶段性信息，`wait_agent` 等待依赖，`interrupt_agent` 发出中断；中断后仍须确认实际停止。`[agents] max_concurrent_threads_per_session = 4` 不计 Root，配置上最多同时运行四个子代理。此示例不固定其他宿主的名称和容量，每个新会话均以实际工具元数据为准。
 
 ## Root 的执行顺序
 
@@ -147,7 +147,7 @@ Root 将有效 `(code)` 结果写入 code_review，验证结果来自对应执�
 
 写入既有验收台账前，先用 `python3 @@CODEX_HOME_SHELL@@/review-contract.py state REQUEST.json RESULT.txt STATE.json` 校验候选状态。字段使用上述扁平枚举，不用 `accepted` 或嵌套 status 对象替代。result/state 检查失败必须记录 contract_error，并阻止对应范围的通过状态；合法 BLOCKED/REQUEST_CHANGES 的解析成功也不表示业务通过。工具输出的 schema_valid 只证明结构和状态关系，证据真实性、未关闭 findings、测试及 strict 父子探针仍由 Root 独立核对。工具无法拦截绕过它的写入，不能宣称已获得宿主级强制门禁。
 
-普通审查的实际 turn_context 由事后审计者从 rollout 读取，取不到则记未知；不要求 Root 运行时取得子线程上下文。strict 由父入口和 Reviewer 分别产生实际权限探针证据，Root 关联入口退出状态和证据作判断。不得仅凭角色配置或要求字段宣称运行时只读隔离。
+普通审查的实际 turn_context 由事后审计者从 rollout 读取，取不到则记未知；不要求 Root 运行时取得子线程上下文。strict 由父入口和 Reviewer 分别产生实际权限探针证据，Root 关联入口退出状态和证据作判断。不得仅凭角色配置或要求字段宣称运行时只读隔离；当前 Codex 不应用角色 `sandbox_mode`，子代理继承父会话权限。
 
 ### 独立性与接受
 
@@ -182,11 +182,11 @@ Root 自行采集每轮 `A_run`、`C_report`，用两者差异判断范围和报
 
 同一 cwd 同时最多一个写入者，包括会生成文件的 Validator；Validator 与 Worker 顺序运行。文件不重叠也不能绕过该规则。并行写入必须使用隔离工作目录，并有单独的整合与验证任务。
 
-Explorer、Locator、Reviewer 的配置默认 read-only；Worker、Validator 默认 workspace-write。Validator 禁止源码修改仍是行为约定，必须由状态比较检测。Root 的 workspace-write 也不提供“只能规划”的工具层强制限制。
+Explorer、Locator、Reviewer 的角色文件声明 `sandbox_mode = "read-only"`；Worker、Validator 声明 `workspace-write`。这些键只是声明，当前 Codex 不会应用到子代理，子代理继承父会话权限。Validator 禁止源码修改仍是行为约定，必须由状态比较检测。Root 的 workspace-write 也不提供“只能规划”的工具层强制限制。严格只读隔离来自 `review-readonly.sh`。
 
-父会话 `/permissions` 或命令行权限覆盖可能覆盖角色默认沙箱。测试应检查实际生效权限；不能仅根据 TOML 宣称隔离。不要用 `--yolo` 测试 read-only 角色。外部连接器/网络副作用不由文件系统 read-only 自动约束。
+父会话 `/permissions` 或命令行权限决定父会话权限，子代理继承该快照，而不是改用角色文件中的沙箱声明。测试应检查实际生效权限；不能仅根据 TOML 宣称隔离。不要用 `--yolo` 测试 read-only 行为。外部连接器/网络副作用不由文件系统 read-only 自动约束。
 
-历史观察（配置源服务器的 Codex CLI 0.154.0，非本次安装服务器的验证结果）：即使未传 `--yolo`，workspace-write Root 下的 astra_reviewer 仍能写入工作区，角色文件中的 read-only 没有形成运行时隔离。Locator/Explorer 的元数据也显示 workspace-write。该历史结果不证明当前服务器或当前版本的行为。在取得当前运行时证据前，同一写入会话中的“只读角色”仅按行为约定处理。
+历史观察（配置源服务器的 Codex CLI 0.154.0，非本次安装服务器的验证结果）：即使未传 `--yolo`，workspace-write Root 下的 astra_reviewer 仍能写入工作区，角色文件中的 read-only 没有形成运行时隔离。Locator/Explorer 的元数据也显示 workspace-write。该历史结果不证明本次安装服务器的行为。当前 Codex（main 与 rust-v0.160.1）同样不把角色 `sandbox_mode` 应用到子代理，而是用父会话权限快照覆盖子权限；同一写入会话中的“只读角色”仍只按行为约定处理。
 
 需要文件系统隔离的 strict 审查必须使用全局安装的独立只读父入口。新包 spec 必填 `budget` 对象：正整数 `timeout_seconds`、正整数 `review_seconds` 和非空 `reason`。总时限至多 86400 秒，且至少给父入口预留 60 秒；Root 根据范围与近期同类样本确定预算，不把最低预留量当作足够的性能承诺。review_seconds 是子审查的 advisory 评估点，timeout_seconds 由外部 watchdog 执行。9/22 已完成父子配对的额外耗时中位数约 133 秒，仅作安排预算参考，不代表每次固定开销。示例 900/660 不是新的全局默认。
 
@@ -204,7 +204,7 @@ bash @@CODEX_HOME_SHELL@@/review-readonly.sh review-round-1 --artifacts review-r
 bash @@CODEX_HOME_SHELL@@/review-readonly.sh /path/to/review-request.json > /path/to/review-events.jsonl
 ```
 
-入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer；子代理继承该只读父会话的权限。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
 
 ## 全局使用与项目约束
 
