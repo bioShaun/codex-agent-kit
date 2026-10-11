@@ -9,3 +9,8 @@ backups/
 
 # Local task checkpoints and session bindings
 /.codex-task-state/
+
+# Local patches and config scratchpads
+*.patch
+config-update/
+
