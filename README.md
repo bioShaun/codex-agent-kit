@@ -84,7 +84,7 @@ python3 install.py --with-context-recovery --apply         # 备份并安装
 python3 install.py --check                                # 后续检查会记住模块已启用
 ```
 
-共享全局 AGENTS.md 的符号链接环境继续加 `--skip-instructions`。安装后在 Codex `/hooks` 信任恢复 hook，并新开会话。完整步骤和任务状态用法见 [上下文恢复部署](docs/context-recovery.md)。脚本与协议随仓库同步，任务状态留在对应项目内，不随配置部署搬运。
+共享全局 AGENTS.md 的符号链接环境继续加 `--skip-instructions`。安装后在 Codex `/hooks` 信任恢复 hook，并新开会话。新安装的恢复 hook 使用 `python3` 和脚本路径，不绑定安装时的解释器。已有 registration 若与磁盘上的受管 handler 一致（含旧的绝对解释器路径）会原样保留，升级后不必重新信任。完整步骤和任务状态用法见 [上下文恢复部署](docs/context-recovery.md)。脚本与协议随仓库同步，任务状态留在对应项目内，不随配置部署搬运。
 
 ## 子代理 fork_turns 护栏
 

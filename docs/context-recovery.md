@@ -12,7 +12,9 @@ python3 install.py --with-context-recovery --apply
 python3 install.py --check
 ```
 
-目标目录优先级仍是 `--target`、`CODEX_HOME`、`~/.codex`。共享 AGENTS.md 为符号链接时加 `--skip-instructions`；启动 hook 自带简短使用指引，已有 astra-planner 入口也会引导读取长任务协议。安装器按目标机器 Python 和安装路径生成命令，支持含空格和单引号的路径。
+目标目录优先级仍是 `--target`、`CODEX_HOME`、`~/.codex`。共享 AGENTS.md 为符号链接时加 `--skip-instructions`；启动 hook 自带简短使用指引，已有 astra-planner 入口也会引导读取长任务协议。首次启用时，恢复 hook 的命令与 fork_turns 护栏相同：`python3`、安装目录下的 `context-state.py`、以及 `hook` 参数。`python3` 留到 Codex 运行 hook 时再解析，安装器不把当时的解释器绝对路径写进定义。因此换任何一个 Python 3.11+ 再执行 `--check` 或 `--apply`，这条命令都不变；虚拟环境被删除，或 pyenv、Homebrew 升级掉安装时的解释器，hook 也不会因此静默失效。路径中的空格和单引号按 shell 规则引用。
+
+已经启用的安装以 `.codex-agent-kit.json` 里的 registration 为准。磁盘上的受管 handler 与该记录一致时，命令原样保留，包括旧版安装器写入的绝对解释器路径。普通升级不改写这条定义，已经在 `/hooks` 信任过的恢复 hook 不必重新信任。受管 handler 被本地改动时仍然拒绝；`--overwrite-local` 先备份，再恢复为记录中的 registration，不会改成另一个解释器。两处重复注册时仍直接拒绝。若要让旧的绝对解释器路径改为上面的 `python3` 命令，先执行 `python3 install.py --without-context-recovery --apply`，再执行 `python3 install.py --with-context-recovery --apply`，然后在 `/hooks` 重新信任。安装器不会在普通升级里自动替换。
 
 安装后新开 Codex，进入 `/hooks` 检查并信任 `codex-agent-kit: context recovery`。新建或改变的 hook 必须由用户按 Codex 的信任流程启用；安装器不伪造信任或绕过审核。原生 hooks 需支持 SessionStart 的 compact source 和 additionalContext；`--check` 仅验证文件与配置，不证明运行事件或信任已生效。
 
@@ -51,7 +53,7 @@ hook 对状态只读，不运行 Git 扫描、测试或作业，不读取完整�
 
 ## 验证
 
-离线检查：`python3 -m unittest discover -s tests -v`。覆盖事件格式、更新恢复、多会话隔离、显式接管、项目迁移、过期/损坏状态、输出限额、只读 hook、符号链接拒绝、文件锁、安装幂等、路径引用、第三方 hook 保留、内联配置、漂移保护及失败回滚。
+离线检查：`python3 -m unittest discover -s tests -v`。覆盖事件格式、更新恢复、多会话隔离、显式接管、项目迁移、过期/损坏状态、输出限额、只读 hook、符号链接拒绝、文件锁、安装幂等、路径引用、第三方 hook 保留、内联配置、漂移保护、失败回滚、换解释器后 `--check` 仍通过，以及旧绝对路径 registration 原样保留。
 
 真实 Codex 验收需在 `/hooks` 信任后进行：在一次性项目中保存带唯一标记的 checkpoint，执行 `/compact`，核对恢复消息和后续行为；再仅对该测试会话设置较低自动压缩阈值，验证自动 compact 中途恢复。离线模拟 hook 输入通过不等于真实宿主事件已验证，不要把文件同步检查当作事件执行证据。超过本机重任务阈值时按当地规则调度。
 
