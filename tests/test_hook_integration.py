@@ -29,6 +29,10 @@ class CombinedHookTests(unittest.TestCase):
         managed = [group for group in groups if group.get("matcher") == "^collaborationspawn_agent$"]
         self.assertEqual(len(managed), 1, "spawn guardrail must survive context recovery installation")
         self.assertIn("force_fork_turns_none.py", managed[0]["hooks"][0]["command"])
+        reviewer_groups = document.get("hooks", {}).get("SubagentStart", [])
+        reviewer = [group for group in reviewer_groups if group.get("matcher") == "^astra_reviewer$"]
+        self.assertEqual(len(reviewer), 1, "reviewer start hook must survive context recovery installation")
+        self.assertIn("reviewer_start_contract.py", reviewer[0]["hooks"][0]["command"])
 
     def test_json_hooks_coexist_repeat_and_disable_independently(self):
         self.install(True)
