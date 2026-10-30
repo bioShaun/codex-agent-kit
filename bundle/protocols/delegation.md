@@ -19,7 +19,7 @@
 
 模型标识必须与实际运行目录对应，不能把 `gpt-5.6` 默认当成 Sol 的可靠别名。角色文件固定模型和 effort；需要升级时由 Root 明确调整配置/角色，不能假设 spawn 参数一定覆盖角色文件。
 
-以下角色覆盖、权限继承与并发计数说明，以 Codex `rust-v0.160.1` 的源码为核对基线（见[源码参考](environment.md#参考)）。其他版本和宿主以实际工具元数据及权限证据为准；升级后应重新核对，不能将该版本的实现推定为所有宿主的行为。
+以下角色覆盖、权限继承与并发计数说明，以 Codex `rust-v0.166.0` 的源码为当前核对基线（见[源码参考](environment.md#参考)）。本仓库 PreToolUse spawn matcher 仍以 [issue #4](https://github.com/bioShaun/codex-agent-kit/issues/4) 在 0.160.1 `multi_agent_v2` 实测的 `collaborationspawn_agent` 为准，升基线后应按该 issue 方法复测；未复测前不扩展为官方文档中的 `Agent` / `spawn_agent` 别名。其他版本和宿主以实际工具元数据及权限证据为准；升级后应重新核对，不能将该版本的实现推定为所有宿主的行为。
 
 用户配置的 `[agents] max_concurrent_threads_per_session = 4` 不计 Root。Codex 的线程登记只统计已派生子代理，因此该配置值表示最多 4 个并发子代理；它仍不保证运行时容量，以当前宿主工具元数据及实际限制为准。同名的 `features.multi_agent_v2.max_concurrent_threads_per_session` 按包含 Root 的总会话线程计数，不能与本键混用；本仓库未设置该键。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。接近容量上限或状态不明时查询实际状态；宿主支持释放时才释放已结束线程，否则延后派发。同一容量错误后，在容量或调度条件改变前不重复 spawn 或 followup，也不提高上限；复用已结束线程同样可能占活跃任务容量。相关探索或实现可复用合适的代理，但不得用旧 Reviewer 复用替代修复后的 fresh review。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
 
@@ -30,10 +30,11 @@
 - 对本来值得委派且契约完整的定位、确定性检查、机械修改，优先选上述对应轻角色；若改用重角色，在 TaskSpec 用一句话说明需要的跨文件推理或不确定性。先积累一小批同类任务的实际结果再扩大使用，不设调用比例或凑样本配额；简单检查仍由 Root 直接完成，不增加串行交接。
 - 轻角色遇到歧义或缺少前提，回传具体缺口，由 Root 补全或升级，不让它自行扩大范围。首次采用轻角色的同类任务，保留实际 model/effort、结果和返工事实；完成较小的一批工作包后再决定扩大范围。轻模型不可用时按既有规则报告阻碍；不为凑比例降级审查或更改角色模型。无需为路由另建报告，TaskSpec 一句话说明选择理由即可。
 - 使用当前宿主实际暴露的子代理工具和 `astra_*` 角色，不要求特定工具名（如 `create_thread`）。所有委派默认显式使用 `fork_turns="none"`；其他宿主使用对应的无历史机制。仅在连续对话确有必要且工具支持时使用有限历史，不默认继承全部历史。独立审查始终无实现历史。
-- 用户级 PreToolUse hook `hooks/force_fork_turns_none.py` 会在已验证的 `collaborationspawn_agent` 调用上把 `fork_turns` 改写为 `"none"`（已经是 `"none"` 则不改）。这是护栏，不是隔离：安装后必须在 `/hooks` 按当前定义信任一次。Codex 0.160.1 `multi_agent_v2` 上 matcher 是 `^collaborationspawn_agent$`；`^Agent$` 和 `^spawn_agent$` 实测不触发，不能当成别名。见 [issue #4](https://github.com/bioShaun/codex-agent-kit/issues/4)。协议仍要求 Root 显式传入 `fork_turns="none"`。
+- 用户级 PreToolUse hook `hooks/force_fork_turns_none.py` 会在已验证的 `collaborationspawn_agent` 调用上把 `fork_turns` 改写为 `"none"`（已经是 `"none"` 则不改）。这是护栏，不是隔离：安装后必须在 `/hooks` 按当前定义信任一次。本仓库 matcher 仍以 issue #4 在 Codex 0.160.1 `multi_agent_v2` 实测为准：`^collaborationspawn_agent$`；`^Agent$` 和 `^spawn_agent$` 实测不触发，不能当成别名（官方 hooks 文档虽写 `spawn_agent` 可匹配 `Agent`，升到 0.166.0 后须按 issue #4 复测再考虑扩展）。协议仍要求 Root 显式传入 `fork_turns="none"`。`fork_turns="none"` 也不隔离父会话已启用的 skills/plugins。
+- 用户级 SubagentStart hook `hooks/reviewer_start_contract.py` 在 matcher `^astra_reviewer$` 命中时，用 `additionalContext` 注入审查首行契约（`PASS/REQUEST_CHANGES/BLOCKED (code|final)`）。这是提醒，不是门禁：官方文档写明 `continue: false` 拦不住子代理启动。安装或变更后须在 `/hooks` 按当前定义信任一次。
 - 每份 TaskSpec 必须自包含，提供路径、已知事实、项目限制与完成条件；不要让子代理重复检索已经充分确认的问题。无历史启动时也必须显式传入当前环境适用的资源调度和临时目录规则。
-- 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守 [审查协议](review.md) 的 fresh 规则。用 `followup_task` 复用 Worker 或 Validator 后，任何写入前先确认其写权限；若已被降级，则改为新建代理（[openai/codex#40278](https://github.com/openai/codex/issues/40278) 仍开放：曾把全权限子代理重置为 read-only/on-request，报告于 codex-cli 0.149.0-alpha.4.1，尚未在 0.160.1 验证）。
-- 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。禁止再派生是行为规则。七个角色文件中的 `[agents] enabled = false` 与 `sandbox_mode` 只是声明，Codex `rust-v0.160.1` 不会把这些键应用到子代理；子代理继承父会话权限。严格只读隔离来自 `review-readonly.sh`。
+- 同类后续问题优先复用已有代理，但不复用已参与实现或受结论污染的代理作独立 Reviewer。审查修复轮次遵守 [审查协议](review.md) 的 fresh 规则。用 `followup_task` 复用 Worker 或 Validator 后，任何写入前先确认其写权限；若已被降级，则改为新建代理（[openai/codex#40278](https://github.com/openai/codex/issues/40278) 仍开放：曾把全权限子代理重置为 read-only/on-request，报告于 codex-cli 0.149.0-alpha.4.1，尚未在当前核对基线 0.166.0 验证）。
+- 子代理不得派生、调用或请求新的子代理；需要额外工作时只向 Root 返回范围或证据缺口。禁止再派生是行为规则。七个角色文件中的 `[agents] enabled = false` 与 `sandbox_mode` / `approval_policy` 只是声明，Codex `rust-v0.166.0` 仍不会把这些键应用到子代理；子代理继承父会话权限。自 0.164 起，角色层 `[features]` 可将 `apps` / `plugins` / `memories` / `request_permissions_tool`（以及可选 `shell_tool`）设为 `false` 以收窄能力；只读 Astra 角色（explorer / locator / reviewer）已硬关前四项，不关 `shell_tool`。严格只读隔离仍来自 `review-readonly.sh`。
 - 派发后 Root 先做不依赖该结果的工作；只有下一步确实依赖未完成结果时才等待。结果到达即处理；超时后评估进展、缩小范围或接手，不机械循环等待。独立工作仍须遵守唯一写入者规则。
 - 普通等待默认 30–60 秒，结果可提前返回；hard 截止时不超过 `min(60 秒, 剩余时间)`。窄任务即将完成、停止确认或排错可短等，但不能低于当前工具声明的最小等待时间；当前 wait_agent 最小为 10000 ms，不发送 1000 ms 等会被抬高的请求。若 hard 剩余时间小于工具下限，不再调用阻塞等待，按执行协议处理截止与取消，不把发出中断当作已停止。其他宿主以下限元数据为准。优化以同类任务的等待调用次数和结果处理延迟衡量，不以 timeout 参数比例或请求时长之和宣称收益。Root 对用户的必要更新频率不因等待策略降低。
 - 通常只回传最终结论、证据和限制。阻塞、重大反证或可解除 Root 依赖的阶段性结论及时发送，不发送固定进度心跳。Root 对用户的必要进度沟通不受此限制。

@@ -47,7 +47,7 @@ Locator、Explorer 的结果第一行使用 complete / partial / blocked，附�
 
 Validator 只处理已给出的精确确定性检查；Validator-complex 处理多阶段 host 流程和证据解释。后者遇到缺失或歧义步骤应 BLOCKED，不能自行补程序或宣称 host 不支持。TaskSpec 必须保留目标项目要求的完整调用形式，包括 CLI 输出模式、provider 和参数。两者区分请求的 tool call、实际 tool result 和 ledger/file 变化，保留失败尝试与修正后的重跑。只有所有要求都有当前通过证据才能 PASS；exit 0 本身不构成 PASS。缺依赖、无法运行或跳过必需检查返回 BLOCKED。禁止自动修复，披露生成物和意外变化。
 
-Reviewer 首行严格使用 `PASS (code)` / `REQUEST_CHANGES (code)` / `BLOCKED (code)`，或对应的 `(final)`，必须复述 TaskSpec 的 review_kind。Root 使用 `^(PASS|REQUEST_CHANGES|BLOCKED) \((code|final)\)$` 完整匹配首行，并核对 kind 与原始 TaskSpec 一致。缺失或无效的必填审查字段时，Reviewer 返回裸 `BLOCKED` 并说明契约缺口，不自行猜测；裸状态、格式错误或 kind 不匹配均由 Root 记为 `contract_error`，不能升级为任何范围的 PASS。已知 kind 时其他原因导致的 BLOCKED 仍带该 kind。
+Reviewer 首行严格使用 `PASS (code)` / `REQUEST_CHANGES (code)` / `BLOCKED (code)`，或对应的 `(final)`，必须复述 TaskSpec 的 review_kind。Root 使用 `^(PASS|REQUEST_CHANGES|BLOCKED) \((code|final)\)$` 完整匹配首行，并核对 kind 与原始 TaskSpec 一致。缺失或无效的必填审查字段时，Reviewer 返回裸 `BLOCKED` 并说明契约缺口，不自行猜测；裸状态、格式错误或 kind 不匹配均由 Root 记为 `contract_error`，不能升级为任何范围的 PASS。已知 kind 时其他原因导致的 BLOCKED 仍带该 kind。用户级 SubagentStart hook `hooks/reviewer_start_contract.py`（matcher `^astra_reviewer$`）会在启动前把上述首行契约注入 `additionalContext`；这是提醒而非门禁（`continue: false` 拦不住启动）。安装或变更后须在 `/hooks` 信任一次。
 
 新准备的审查在接收后使用统一入口，将原始 Reviewer 文本保存为文件，显式传入 Root 已核实的验证状态及证据：
 

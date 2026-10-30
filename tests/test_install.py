@@ -265,20 +265,32 @@ empty = {}
         self.assertEqual(len(groups), 1)
         return groups[0]
 
-    def assert_managed_command(self, command: str):
+    def assert_managed_command(self, command: str, script_rel: str | None = None):
         parts = shlex.split(command)
         self.assertEqual(parts[0], "python3")
-        self.assertEqual(Path(parts[1]), (self.target / installer.HOOK_SCRIPT).absolute())
+        rel = script_rel or installer.HOOK_SCRIPT
+        self.assertEqual(Path(parts[1]), (self.target / rel).absolute())
+
+    def reviewer_hook_group(self, document: dict) -> dict:
+        groups = [group for group in document["hooks"]["SubagentStart"]
+                  if group.get("matcher") == installer.REVIEWER_MATCHER]
+        self.assertEqual(len(groups), 1)
+        return groups[0]
 
     def test_fresh_install_writes_spawn_hook(self):
         desired, old = installer.plan(self.target)
         self.assertIn(installer.HOOK_SCRIPT, desired)
+        self.assertIn(installer.REVIEWER_HOOK_SCRIPT, desired)
         self.assertIn(installer.HOOKS_JSON, desired)
         self.assertIsNone(old[installer.HOOKS_JSON])
         self.assertFalse(self.target.exists())
         self.install()
         script = self.target / installer.HOOK_SCRIPT
         self.assertEqual(script.read_bytes(), (ROOT / "bundle" / installer.HOOK_SCRIPT).read_bytes())
+        reviewer_script = self.target / installer.REVIEWER_HOOK_SCRIPT
+        self.assertEqual(
+            reviewer_script.read_bytes(),
+            (ROOT / "bundle" / installer.REVIEWER_HOOK_SCRIPT).read_bytes())
         document = json.loads((self.target / "hooks.json").read_text())
         group = self.hook_group(document)
         self.assertEqual(group["matcher"], "^collaborationspawn_agent$")
@@ -287,11 +299,20 @@ empty = {}
         self.assertEqual(hook["timeout"], 10)
         self.assertNotIn("async", hook)
         self.assert_managed_command(hook["command"])
+        reviewer = self.reviewer_hook_group(document)
+        self.assertEqual(reviewer["matcher"], "^astra_reviewer$")
+        rhook = reviewer["hooks"][0]
+        self.assertEqual(rhook["type"], "command")
+        self.assertEqual(rhook["timeout"], 10)
+        self.assertEqual(rhook["additionalContextLimit"], 2500)
+        self.assert_managed_command(rhook["command"], installer.REVIEWER_HOOK_SCRIPT)
         self.assertNotIn("collaborationspawn_agent", (self.target / "config.toml").read_text())
         state = json.loads((self.target / installer.STATE).read_text())
         self.assertIn(installer.HOOK_SCRIPT, state["files"])
+        self.assertIn(installer.REVIEWER_HOOK_SCRIPT, state["files"])
         self.assertNotIn("hooks.json", state["files"])
         self.assertIn(installer.HOOK_GROUP_STATE, state["hook_groups"])
+        self.assertIn(installer.REVIEWER_HOOK_GROUP_STATE, state["hook_groups"])
         proc = subprocess.run(
             [sys.executable, str(script)],
             input=json.dumps({
@@ -305,6 +326,17 @@ empty = {}
         updated = json.loads(proc.stdout)["hookSpecificOutput"]["updatedInput"]
         self.assertEqual(updated["fork_turns"], "none")
         self.assertEqual(updated["message"], "hi")
+        proc = subprocess.run(
+            [sys.executable, str(reviewer_script)],
+            input=json.dumps({
+                "hook_event_name": "SubagentStart",
+                "agent_type": "astra_reviewer",
+            }).encode(),
+            capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("PASS (code)", context)
 
     def test_hook_install_is_idempotent(self):
         self.install()
@@ -475,6 +507,39 @@ command = "echo inline-user"
         with self.assertRaisesRegex(ValueError, "Symlink"):
             installer.plan(self.target)
         self.assertEqual(marker.read_text(), "untouched")
+
+    def test_readonly_astra_roles_disable_supported_features(self):
+        self.install()
+        for name in ("astra_explorer", "astra_locator", "astra_reviewer"):
+            parsed = tomllib.loads((self.target / f"agents/{name}.toml").read_text())
+            self.assertEqual(parsed["features"]["apps"], False)
+            self.assertEqual(parsed["features"]["plugins"], False)
+            self.assertEqual(parsed["features"]["memories"], False)
+            self.assertEqual(parsed["features"]["request_permissions_tool"], False)
+            self.assertNotIn("shell_tool", parsed.get("features", {}))
+        worker = tomllib.loads((self.target / "agents/astra_worker.toml").read_text())
+        self.assertNotIn("features", worker)
+
+    def test_inline_hooks_receive_reviewer_subagent_start(self):
+        self.target.mkdir()
+        original = """model = "my-root-model"
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "echo inline-stop"
+"""
+        (self.target / "config.toml").write_text(original)
+        self.install()
+        self.assertFalse((self.target / "hooks.json").exists())
+        parsed = tomllib.loads((self.target / "config.toml").read_text())
+        reviewer = [g for g in parsed["hooks"]["SubagentStart"]
+                    if g.get("matcher") == "^astra_reviewer$"]
+        self.assertEqual(len(reviewer), 1)
+        self.assert_managed_command(
+            reviewer[0]["hooks"][0]["command"], installer.REVIEWER_HOOK_SCRIPT)
+
 
 
 if __name__ == "__main__":
