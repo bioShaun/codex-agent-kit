@@ -5,7 +5,7 @@ import sys
 import unittest
 
 
-MODULE_PATH = pathlib.Path(__file__).parent / "bundle" / "context-state.py"
+MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "bundle" / "context-state.py"
 SPEC = importlib.util.spec_from_file_location("context_state", MODULE_PATH)
 context_state = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = context_state
