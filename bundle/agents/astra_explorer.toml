@@ -16,3 +16,9 @@ Follow the applicable user-level and project-level AGENTS.md resource and tempor
 
 [agents]
 enabled = false
+
+[features]
+apps = false
+plugins = false
+memories = false
+request_permissions_tool = false
