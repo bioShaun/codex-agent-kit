@@ -92,7 +92,9 @@ python3 install.py --check                                # 后续检查会记�
 
 这是护栏，不是隔离边界。安装后必须在 `/hooks` 中按当前定义信任一次。Codex 0.160.1 的 `multi_agent_v2` 上，实际 `tool_name` 是 `collaborationspawn_agent`，matcher `^collaborationspawn_agent$` 能完成改写。同一次测试里 `^Agent$` 和 `^spawn_agent$` 都没有触发，因此安装器不写入这两个 matcher，脚本也不把 `Agent` / `spawn_agent` 当成别名。顶层 `agent_type` 表示调用者（Root 上没有该字段，子代理里是角色名），hook 不读取它。子代理再派生子代理的路径没有在这次测试里验证。详见 [issue #4](https://github.com/bioShaun/codex-agent-kit/issues/4)。那次信任是通过 app-server 写入的，没有在 TUI 里操作 `/hooks`。
 
-没有 hook 配置时，安装器新建目标目录下的 [`hooks.json`](https://developers.openai.com/codex/hooks)。文件里已有其他 hook 时，只追加或更新这一条，保留其余条目。`hooks.json` 整文件不计入受管文件哈希：本地改掉这一条会被拒绝，另加一条用户 hook 不会。若还没有 `hooks.json`，但 `config.toml` 里已经有 `[hooks]`，就合并进现有内联表，避免同一配置层出现第二份 hook 来源（Codex 会合并两份并在启动时警告）。两份都已经存在时，只改 `hooks.json` 里的受管条目，不搬移、不删除另一侧的用户 hook。受管命令若和用户 handler 写在同一个 matcher 组里，安装器拒绝合并，包括 `--overwrite-local`，因为替换整组会丢掉用户 handler。内联合并若改写 `config.toml`，和现有受管设置一样会重排 TOML，注释不保留，原文在备份中。
+安装器还会注册 `SubagentStart` hook。启动 `astra_reviewer` 时，它会提醒 Reviewer 按 TaskSpec 指定的类型输出首行状态。安装后在 Codex `/hooks` 中检查并信任这条 hook。Root 仍会核对首行格式和审查类型。
+
+没有 hook 配置时，安装器新建目标目录下的 [`hooks.json`](https://developers.openai.com/codex/hooks)。如果只有 `config.toml` 中的内联 `[hooks]`，安装器会将两条受管 hook 写入该表。如果两份配置已经存在，优先沿用已有受管 hook 所在的文件。两份文件各有受管 hook 时，安装器会提示手动协调来源。用户添加的 hook 会保留。受管条目的本地改动会被拒绝，除非显式指定 `--overwrite-local`。受管命令和用户 handler 共用一个 matcher 组时，需要先手动拆分。内联合并会重排 TOML，原始配置和注释可在备份中查看。
 
 ## 备份与恢复
 

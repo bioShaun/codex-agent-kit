@@ -152,24 +152,11 @@ def command_mentions_script(command: object, script_rel: str) -> bool:
     return isinstance(command, str) and Path(script_rel).name in command
 
 
-def command_is_managed(command: object) -> bool:
-    """True when command runs the spawn (PreToolUse) managed script."""
-    return command_mentions_script(command, HOOK_SCRIPT)
-
-
-def command_is_reviewer_managed(command: object) -> bool:
-    return command_mentions_script(command, REVIEWER_HOOK_SCRIPT)
-
-
 def is_managed_group_for(group: object, script_rel: str) -> bool:
     if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
         return False
     return any(isinstance(item, dict) and command_mentions_script(item.get("command"), script_rel)
                for item in group["hooks"])
-
-
-def is_managed_group(group: object) -> bool:
-    return is_managed_group_for(group, HOOK_SCRIPT)
 
 
 def is_pure_managed_group_for(group: object, script_rel: str) -> bool:
@@ -178,10 +165,6 @@ def is_pure_managed_group_for(group: object, script_rel: str) -> bool:
         return False
     return all(isinstance(item, dict) and command_mentions_script(item.get("command"), script_rel)
                for item in hooks)
-
-
-def is_pure_managed_group(group: object) -> bool:
-    return is_pure_managed_group_for(group, HOOK_SCRIPT)
 
 
 def event_hook_entries(hooks_table: object, event_name: str) -> list:
@@ -202,10 +185,6 @@ def pre_tool_use_entries(hooks_table: object) -> list:
 def managed_indexes_for(entries: list, script_rel: str) -> list[int]:
     return [index for index, group in enumerate(entries)
             if is_managed_group_for(group, script_rel)]
-
-
-def managed_indexes(pre: list) -> list[int]:
-    return managed_indexes_for(pre, HOOK_SCRIPT)
 
 
 def reconcile_managed_event(entries: list, group: dict, prior_hash: str | None,
@@ -240,12 +219,6 @@ def reconcile_managed_event(entries: list, group: dict, prior_hash: str | None,
         f"Local edit detected: managed {event_label} hook; "
         "commit it to the repository first, or use --overwrite-local with --apply "
         "(backup retained)")
-
-
-def reconcile_pre_tool_use(pre: list, group: dict, prior_hash: str | None,
-                           overwrite_local: bool) -> list | None:
-    return reconcile_managed_event(
-        pre, group, prior_hash, overwrite_local, HOOK_SCRIPT, "PreToolUse")
 
 
 def load_hooks_document(raw: bytes | None) -> dict | None:
