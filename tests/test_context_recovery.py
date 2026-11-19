@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -298,6 +300,85 @@ class ContextInstallTests(unittest.TestCase):
         self.assertNotIn("SessionStart", hooks)
         state = json.loads((self.target / installer.STATE).read_text())
         self.assertFalse(state["context_recovery"]["enabled"])
+
+    def run_check(self, executable: str) -> tuple[int, str]:
+        argv = ["install.py", "--target", str(self.target), "--check"]
+        stdout = io.StringIO()
+        with patch.object(installer.sys, "executable", executable), patch.object(installer.sys, "argv", argv):
+            with contextlib.redirect_stdout(stdout):
+                code = installer.main()
+        return code, stdout.getvalue()
+
+    def context_handlers(self, document: dict) -> list:
+        groups = document.get("hooks", {}).get("SessionStart", [])
+        return [handler for group in groups for handler in group.get("hooks", [])
+                if handler.get("statusMessage") == installer.CONTEXT_HOOK_MARKER]
+
+    def test_context_hook_check_is_stable_across_interpreters(self):
+        with patch.object(installer.sys, "executable", "/tmp/venv-a/bin/python"):
+            self.apply(True)
+        document = json.loads((self.target / "hooks.json").read_text())
+        command = self.context_handlers(document)[0]["command"]
+        argv = shlex.split(command)
+        self.assertEqual(argv, ["python3", str(self.target / "context-state.py"), "hook"])
+        with patch.object(installer.sys, "executable", "/tmp/venv-b/bin/python"):
+            desired, old = self.plan()
+        self.assertEqual(desired, old)
+        code, output = self.run_check("/tmp/venv-b/bin/python")
+        self.assertEqual(code, 0, output)
+        self.assertIn("CHECK PASS", output)
+        self.assertNotIn("UPDATE", output)
+
+    def test_legacy_absolute_interpreter_registration_is_kept(self):
+        self.apply(True)
+        absolute = shlex.join([
+            "/tmp/old-venv/bin/python", str(self.target / "context-state.py"), "hook"])
+        hooks_path = self.target / "hooks.json"
+        document = json.loads(hooks_path.read_text())
+        self.context_handlers(document)[0]["command"] = absolute
+        hooks_path.write_bytes((json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode())
+        state_path = self.target / installer.STATE
+        state = json.loads(state_path.read_text())
+        state["context_recovery"]["registration"]["hooks"][0]["command"] = absolute
+        state_path.write_bytes((json.dumps(state, indent=2) + "\n").encode())
+
+        with patch.object(installer.sys, "executable", "/usr/local/bin/python3.13"):
+            desired, old = self.plan()
+        self.assertEqual(desired, old)
+        code, output = self.run_check("/usr/local/bin/python3.13")
+        self.assertEqual(code, 0, output)
+        self.assertIn("CHECK PASS", output)
+        kept = self.context_handlers(json.loads(hooks_path.read_text()))
+        self.assertEqual([handler["command"] for handler in kept], [absolute])
+
+        document = json.loads(hooks_path.read_text())
+        self.context_handlers(document)[0]["timeout"] = 55
+        hooks_path.write_bytes((json.dumps(document, ensure_ascii=False, indent=2) + "\n").encode())
+        with patch.object(installer.sys, "executable", "/usr/local/bin/python3.13"):
+            with self.assertRaisesRegex(ValueError, "Local edit detected: context recovery hook"):
+                self.plan()
+        refused = self.context_handlers(json.loads(hooks_path.read_text()))
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(refused[0]["command"], absolute)
+        self.assertEqual(refused[0]["timeout"], 55)
+
+        with patch.object(installer.sys, "executable", "/opt/other/bin/python"):
+            self.apply(overwrite=True)
+        restored = self.context_handlers(json.loads(hooks_path.read_text()))
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(restored[0]["command"], absolute)
+        self.assertEqual(restored[0]["timeout"], 10)
+        code, output = self.run_check("/opt/another/bin/python")
+        self.assertEqual(code, 0, output)
+        self.assertIn("CHECK PASS", output)
+
+        self.apply(False)
+        self.assertEqual(self.context_handlers(json.loads(hooks_path.read_text())), [])
+        with patch.object(installer.sys, "executable", "/tmp/fresh-venv/bin/python"):
+            self.apply(True)
+        rebound = self.context_handlers(json.loads(hooks_path.read_text()))
+        self.assertEqual(len(rebound), 1)
+        self.assertEqual(shlex.split(rebound[0]["command"])[0], "python3")
 
     def test_cli_opt_in_preview_apply_check(self):
         command = [sys.executable, str(ROOT / "install.py"), "--target", str(self.target), "--with-context-recovery"]
