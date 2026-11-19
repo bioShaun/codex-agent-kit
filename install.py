@@ -349,6 +349,27 @@ def context_hooks(document: dict, registration: dict | None, previous: dict,
     return document != before
 
 
+def context_hook_command(target: Path) -> str:
+    # `python3` is resolved on the Codex host when the hook runs, matching
+    # hook_command(). Do not freeze the installer interpreter: --check compares
+    # this string by value, and Codex trusts the hook by the hash of its definition.
+    script = (target / "context-state.py").absolute()
+    return shlex.join(["python3", str(script), "hook"])
+
+
+def context_registration(target: Path, prior: dict) -> dict:
+    # An enabled install keeps the recorded registration, including a legacy
+    # absolute interpreter, when context_hooks still finds that handler on disk.
+    # Rewriting it would change the hook hash. A fresh enable has no record and
+    # gets the portable python3 command above.
+    recorded = prior.get("registration") if prior.get("enabled") else None
+    if isinstance(recorded, dict):
+        return recorded
+    return {"matcher": "^(startup|resume|compact)$", "hooks": [{
+        "type": "command", "command": context_hook_command(target), "timeout": 10,
+        "statusMessage": CONTEXT_HOOK_MARKER, "additionalContextLimit": 5000}]}
+
+
 def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = False,
          context_recovery: bool | None = None) -> tuple[dict, dict]:
     desired = {}
@@ -456,10 +477,7 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
             source = owners[0] if owners else ("config.toml" if inline_events and hook_bytes is None else "hooks.json")
         inline = source == "config.toml"
         document = {"hooks": inline_hooks} if inline else json_document
-        command = shlex.join([sys.executable, str(target / "context-state.py"), "hook"])
-        registration = {"matcher": "^(startup|resume|compact)$", "hooks": [{
-            "type": "command", "command": command, "timeout": 10,
-            "statusMessage": CONTEXT_HOOK_MARKER, "additionalContextLimit": 5000}]}
+        registration = context_registration(target, prior_context)
         changed = context_hooks(document, registration if context_enabled else None,
                                 prior_context, overwrite_local)
         if inline:
