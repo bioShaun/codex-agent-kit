@@ -7,6 +7,7 @@
 - 验证任务：给出完整命令或操作流程、环境和前提、通过条件、允许产生的文件及独占执行窗口；明确 ordinary 或 strict 证据要求。测试不得因名称看似本地就被假定无生产访问或外部副作用。
 - 审查任务：必填 `review_kind`（`code` 或 `final`）、`scope_id`、`snapshot_id` 和 `isolation_requirement`（`ordinary` 或 `strict`），并明确当前范围所需证据。kind 描述审查范围，不是预设 verdict；不向 Reviewer 提供 Root 的状态判断来代替中性事实。代码审查仅判断指定代码/文档范围；final 审查对照本轮全部 Acceptance。strict 是隔离要求，与 kind 独立，不得用 `code` 标签免除任务指定的 strict 证据。
 - 严格验收任务：额外明确冻结证据范围、前后哈希或快照、完整日志位置、独立审查及运行时权限要求。Budget 写入模式、无进展判定和纠正轮数；advisory 使用 UTC `startedAt` 与 `nextAssessmentAt`，hard 使用 UTC `startedAt`、`deadline` 与取消能力。任何层级使用 hard 截止时都必须提供上述 hard 预算字段。
+- 需要可执行方案的实施工作包：在方案或对应 TaskSpec 中写明重评条件，例如规定的验收连续失败、接口或约束与方案不符、范围或目标变化。未触发这些条件时按当前方案继续，不因例行进展重开规划。是否重规划由 Root 根据这些条件决定。这是叙述约定，不向 review-workflow 的 spec、验收状态 JSON 或 metrics spec 增加新字段；窄任务不必填写此项。
 
 实现路由：Root 处理简单任务、范围决策及依赖主上下文的复杂实现；明确机械转换用 Worker-fast；边界清晰且委派有收益的行为实现用 Worker。Worker 可自主选择边界内的命名、局部算法和既有模式；Worker-fast 不承担行为设计、跨项目语义重命名、公共接口变更或复杂实现。
 
