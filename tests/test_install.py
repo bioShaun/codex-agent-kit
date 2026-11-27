@@ -97,10 +97,24 @@ trust_level = "trusted"
         self.assertTrue(override.read_text().startswith("override rules"))
         self.assertIn(installer.BEGIN, override.read_text())
 
+    def test_corrupt_state_never_turns_an_update_into_a_first_install(self):
+        self.install()
+        role = self.target / "agents/astra_worker.toml"
+        role.write_text("local changes")
+        state = self.target / installer.STATE
+        for contents in ("", "[]", '{"version":1,"files":[]}', '{"version":2,"files":{}}'):
+            with self.subTest(contents=contents):
+                state.write_text(contents)
+                result = subprocess.run([sys.executable, ROOT / "install.py", "--target", self.target,
+                                         "--apply"], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(role.read_text(), "local changes")
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_local_drift_refused_and_explicit_override_backed_up(self):
         self.install()
         p = self.target / "agents/astra_worker.toml"
-        p.write_text(p.read_text().replace("gpt-6.1-sol", "my-local-model"))
+        p.write_text(p.read_text().replace("gpt-6.2-sol", "my-local-model"))
         edited = p.read_bytes()
         with self.assertRaisesRegex(ValueError, "Local edit detected"):
             installer.plan(self.target)
@@ -187,6 +201,27 @@ trust_level = "trusted"
         self.assertEqual(role.stat().st_mode & 0o777, 0o640)
         self.assertFalse((self.target / "agents/astra_locator.toml").exists())
 
+    def test_rollback_continues_after_one_restore_fails(self):
+        self.target.mkdir()
+        desired = {"a": b"new A", "b": b"new B", "c": b"new C"}
+        old = {"a": b"A", "b": b"B", "c": None}
+        for name in ("a", "b"):
+            (self.target / name).write_bytes(old[name])
+        write = installer.atomic_write
+
+        def fail(path, data, mode):
+            if path == self.target / "c" or (path == self.target / "b" and data == old["b"]):
+                raise OSError(f"failed {path.name}")
+            write(path, data, mode)
+
+        errors = io.StringIO()
+        with patch.object(installer, "atomic_write", side_effect=fail), contextlib.redirect_stderr(errors):
+            with self.assertRaisesRegex(OSError, "failed c"):
+                installer.apply(self.target, desired, old)
+        self.assertEqual((self.target / "a").read_bytes(), old["a"])
+        self.assertIn("Could not restore b", errors.getvalue())
+        self.assertIn("recovery backup", errors.getvalue())
+
     def test_edit_during_planning_is_not_adopted_as_a_safe_baseline(self):
         self.install()
         for rel in ("config.toml", "agents/astra_worker.toml", "AGENTS.md"):
@@ -232,6 +267,7 @@ events = [{ matcher = "Bash", hooks = [{ type = "command", command = "echo hi" }
 ["a.b"."quoted key"]
 empty = {}
 '''.replace('quote \\"', 'quote \\\"'))
+        data["control"] = "tab\t DEL\x7f emoji😀"
         rendered = installer.dump_toml(data)
         self.assertEqual(installer.toml_value(tomllib.loads(rendered)), installer.toml_value(data))
 

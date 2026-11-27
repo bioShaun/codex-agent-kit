@@ -1,6 +1,6 @@
 name = "astra_worker"
 description = "Implement a bounded TaskSpec requiring reasoning across behaviors or files."
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 

@@ -1,6 +1,6 @@
 name = "astra_reviewer"
 description = "Independently review a bounded change against requirements, actual files, and evidence."
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 

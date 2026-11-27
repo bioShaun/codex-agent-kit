@@ -74,6 +74,17 @@ class ReviewWorkflowContractErrorTests(unittest.TestCase):
         self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)
         return package
 
+    def test_blank_instructions_cannot_be_replaced_by_generated_package_notes(self):
+        package = self.prepare_package("code")
+        spec_dir = self.root / "spec-code"
+        (spec_dir / "instructions.md").write_text("  \n")
+        target = package.with_name("blank")
+        prepared = self.workflow("prepare", "--spec", str(spec_dir / "spec.json"), "--output",
+                                 str(target), "--protocol-sha256", self.protocol_sha256())
+        self.assertEqual(prepared.returncode, 2)
+        self.assertIn("instructions_file", json.loads(prepared.stdout)["contract_error"])
+        self.assertFalse(target.exists())
+
     def receive_contract_error(self, package, *, validation, code_review, evidence):
         result_path = self.root / f"{package.name}-result.txt"
         # Bare BLOCKED is a contract error: the first line must be `STATUS (code|final)`.

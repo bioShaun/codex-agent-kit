@@ -21,6 +21,8 @@ Codex Root 在每个 Root 会话首次执行原生 Codex 实现、验证或独�
 
 源码核对基线：Codex `rust-v0.166.0`（本仓库 hook matcher 实测仍锚定 issue #4 的 0.160.1 `multi_agent_v2`）。以下链接用于区分版本实现与通用文档说明；源码核对不能替代目标宿主的运行时权限验证。
 
+2026-11-19 官方配置复核：当前文档把 `agents.max_threads`（默认 6）、`agents.max_depth`（默认 1）和 `agents.job_max_runtime_seconds` 作为 `[agents]` 主键，并说明未指定时子代理继承父会话的模型、effort、`sandbox_mode`、MCP 与技能配置。本机 Codex 0.170.0 仍识别 `max_concurrent_threads_per_session`、`default_subagent_model`、`default_subagent_reasoning_effort` 和 `interrupt_message`；`[features].multi_agent` 已被标记为弃用，只保留 V1 回退。新机器按实际版本的弃用提示和运行时元数据调整，不混用两套并发键。
+
 - [角色可应用的覆盖字段](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/core/src/agent/role.rs)
 - [子代理权限快照继承](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/core/src/agent/child_config.rs)
 - [子代理登记与 Root 计数](https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/core/src/agent/registry.rs)

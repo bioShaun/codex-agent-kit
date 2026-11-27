@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import stat
@@ -69,7 +70,7 @@ def merge(base: dict, updates: dict) -> None:
 
 def toml_value(value) -> str:
     if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
     if isinstance(value, bool):
         return str(value).lower()
     if isinstance(value, (int, float)):
@@ -147,26 +148,6 @@ def canonical_json(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
-def command_mentions_script(command: object, script_rel: str) -> bool:
-    # Substring match survives shell quoting. Each managed script basename is unique.
-    return isinstance(command, str) and Path(script_rel).name in command
-
-
-def is_managed_group_for(group: object, script_rel: str) -> bool:
-    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-        return False
-    return any(isinstance(item, dict) and command_mentions_script(item.get("command"), script_rel)
-               for item in group["hooks"])
-
-
-def is_pure_managed_group_for(group: object, script_rel: str) -> bool:
-    hooks = group.get("hooks") if isinstance(group, dict) else None
-    if not isinstance(hooks, list) or not hooks:
-        return False
-    return all(isinstance(item, dict) and command_mentions_script(item.get("command"), script_rel)
-               for item in hooks)
-
-
 def event_hook_entries(hooks_table: object, event_name: str) -> list:
     if not isinstance(hooks_table, dict):
         raise ValueError("Cannot safely merge hooks: hooks value is not a table")
@@ -178,20 +159,75 @@ def event_hook_entries(hooks_table: object, event_name: str) -> list:
     return entries
 
 
+def same_hook_path(argument: str, script: str) -> bool:
+    if not os.path.isabs(argument):
+        return False
+    if os.path.realpath(argument) == os.path.realpath(script):
+        return True
+    try:
+        return os.path.samefile(argument, script)
+    except OSError:
+        return False
+
+
+def matches_hook_handler(item: object, desired: dict, prior_hash: str | None,
+                         event_label: str) -> bool:
+    if not isinstance(item, dict):
+        return False
+    handler = desired["hooks"][0]
+    command = item.get("command")
+    if command == handler["command"]:
+        return True
+    if not isinstance(command, str):
+        command = ""
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = []
+    script = shlex.split(handler["command"])[1]
+    # Only claim shell text that round-trips to a quoted, single argv invocation.
+    if (len(words) >= 2 and command == shlex.join(words) and same_hook_path(words[-1], script)
+            and words[0] == "python3"
+            and all(word == "--" or re.fullmatch(r"-[bBdEIOPqRsSuvx]+", word) for word in words[1:-1])):
+        return True
+    # User wrappers can execute extra commands. Never replace these automatically.
+    script_name = re.escape(Path(script).name)
+    if ((prior_hash and item.get("statusMessage") == handler["statusMessage"])
+            or any(same_hook_path(word, script) for word in words)
+            or re.search(rf"(?<![\w.-]){script_name}(?![\w.-])", command)):
+        raise ValueError(f"Cannot identify previous {event_label} command; reconcile manually")
+    return False
+
+
+def managed_indexes(groups: list, desired: dict, prior_hash: str | None,
+                    event_label: str) -> list[int]:
+    indexes = []
+    for index, group in enumerate(groups):
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            continue
+        if prior_hash and digest(canonical_json(group)) == prior_hash:
+            indexes.append(index)
+        elif any(matches_hook_handler(item, desired, prior_hash, event_label)
+                 for item in group["hooks"]):
+            indexes.append(index)
+    return indexes
+
+
+def default_hook_source(inline: dict, document: dict | None) -> str:
+    # Event handlers are arrays. Trust settings and descriptive metadata are not.
+    if document and document.get("hooks"):
+        return HOOKS_JSON
+    return "config.toml" if any(isinstance(value, list) for value in inline.values()) else HOOKS_JSON
+
+
 def pre_tool_use_entries(hooks_table: object) -> list:
     return event_hook_entries(hooks_table, "PreToolUse")
 
 
-def managed_indexes_for(entries: list, script_rel: str) -> list[int]:
-    return [index for index, group in enumerate(entries)
-            if is_managed_group_for(group, script_rel)]
-
-
 def reconcile_managed_event(entries: list, group: dict, prior_hash: str | None,
-                            overwrite_local: bool, script_rel: str,
-                            event_label: str) -> list | None:
+                            overwrite_local: bool, event_label: str) -> list | None:
     """Return a new event list, or None when the on-disk group already matches."""
-    indexes = managed_indexes_for(entries, script_rel)
+    indexes = managed_indexes(entries, group, prior_hash, event_label)
     if len(indexes) > 1:
         raise ValueError(
             f"Cannot safely merge hooks: multiple managed {event_label} entries; "
@@ -204,7 +240,7 @@ def reconcile_managed_event(entries: list, group: dict, prior_hash: str | None,
                 "(backup retained)")
         return [*entries, group]
     current = entries[indexes[0]]
-    if not is_pure_managed_group_for(current, script_rel):
+    if len(current["hooks"]) != 1:
         # Replacing the group would drop the user's other handlers, including with --overwrite-local.
         raise ValueError(
             "Cannot safely merge hooks: managed command shares a matcher group with other "
@@ -239,18 +275,18 @@ def load_hooks_document(raw: bytes | None) -> dict | None:
 
 
 def prior_hook_hash(previous: dict, state_key: str = HOOK_GROUP_STATE) -> str | None:
-    stored = previous.get("hook_groups") or {}
+    stored = previous.get("hook_groups", {})
     if not isinstance(stored, dict):
         raise ValueError("Invalid installer state; no installation performed")
-    value = stored.get(state_key)
-    if value is None:
+    if state_key not in stored:
         return None
-    if not isinstance(value, str):
+    value = stored[state_key]
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise ValueError("Invalid installer state; no installation performed")
     return value
 
 
-def plan_hook_installation(target: Path, parsed_config: dict, merged_config: dict, capture,
+def plan_hook_installation(target: Path, merged_config: dict, capture,
                            previous: dict, overwrite_local: bool) -> tuple[bytes | None, dict | None]:
     """Choose one hook file and merge this kit's managed hook groups into it.
 
@@ -269,28 +305,20 @@ def plan_hook_installation(target: Path, parsed_config: dict, merged_config: dic
     reviewer_prior = prior_hook_hash(previous, REVIEWER_HOOK_GROUP_STATE)
     raw = capture(HOOKS_JSON)
     document = load_hooks_document(raw)
-    inline = "hooks" in parsed_config
-    if inline:
-        if not isinstance(parsed_config["hooks"], dict):
-            raise ValueError("Cannot safely merge hooks: config.toml hooks value is not a table")
-        toml_hooks = parsed_config["hooks"]
-    else:
-        toml_hooks = {}
-    if document is not None and isinstance(document.get("hooks"), dict):
-        json_hooks = document["hooks"]
-    else:
-        json_hooks = {}
+    toml_hooks = merged_config.get("hooks", {})
+    if not isinstance(toml_hooks, dict):
+        raise ValueError("Cannot safely merge hooks: config.toml hooks value is not a table")
+    json_hooks = document.get("hooks", {}) if document is not None else {}
 
     def any_managed_hits(hooks_table: dict) -> bool:
-        if not hooks_table:
-            return False
-        spawn = managed_indexes_for(event_hook_entries(hooks_table, "PreToolUse"), HOOK_SCRIPT)
-        reviewer = managed_indexes_for(
-            event_hook_entries(hooks_table, "SubagentStart"), REVIEWER_HOOK_SCRIPT)
+        spawn = managed_indexes(event_hook_entries(hooks_table, "PreToolUse"),
+                                spawn_group, spawn_prior, "PreToolUse")
+        reviewer = managed_indexes(event_hook_entries(hooks_table, "SubagentStart"),
+                                   reviewer_group, reviewer_prior, "SubagentStart")
         return bool(spawn or reviewer)
 
-    json_has = any_managed_hits(json_hooks) if document is not None else False
-    toml_has = any_managed_hits(toml_hooks) if inline else False
+    json_has = any_managed_hits(json_hooks)
+    toml_has = any_managed_hits(toml_hooks)
     if json_has and toml_has:
         raise ValueError(
             "Cannot safely merge hooks: managed entry exists in both hooks.json and config.toml; "
@@ -299,24 +327,20 @@ def plan_hook_installation(target: Path, parsed_config: dict, merged_config: dic
         destination = HOOKS_JSON
     elif toml_has:
         destination = "config.toml"
-    elif document is not None:
-        destination = HOOKS_JSON
-    elif inline:
-        destination = "config.toml"
     else:
-        destination = HOOKS_JSON
+        destination = default_hook_source(toml_hooks, document)
 
     def apply_managed(hooks: dict) -> bool:
         changed = False
         spawn_updated = reconcile_managed_event(
             event_hook_entries(hooks, "PreToolUse"), spawn_group, spawn_prior,
-            overwrite_local, HOOK_SCRIPT, "PreToolUse")
+            overwrite_local, "PreToolUse")
         if spawn_updated is not None:
             hooks["PreToolUse"] = spawn_updated
             changed = True
         reviewer_updated = reconcile_managed_event(
             event_hook_entries(hooks, "SubagentStart"), reviewer_group, reviewer_prior,
-            overwrite_local, REVIEWER_HOOK_SCRIPT, "SubagentStart")
+            overwrite_local, "SubagentStart")
         if reviewer_updated is not None:
             hooks["SubagentStart"] = reviewer_updated
             changed = True
@@ -436,8 +460,15 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
         return observed[rel]
 
     state_bytes = capture(STATE)
-    previous = json.loads(state_bytes) if state_bytes else {"files": {}}
+    previous = json.loads(state_bytes) if state_bytes is not None else {"version": 1, "files": {}}
+    if (not isinstance(previous, dict) or type(previous.get("version")) is not int
+            or previous["version"] != 1 or not isinstance(previous.get("files"), dict)
+            or any(not isinstance(h, str) or re.fullmatch(r"[0-9a-f]{64}", h) is None
+                   for h in previous["files"].values())):
+        raise ValueError("Invalid installer state; no installation performed")
     prior_context = previous.get("context_recovery", {})
+    if not isinstance(prior_context, dict) or type(prior_context.get("enabled", False)) is not bool:
+        raise ValueError("Invalid context recovery installer state; no installation performed")
     context_enabled = prior_context.get("enabled", False) if context_recovery is None else context_recovery
     context_state = {"enabled": context_enabled}
     roles = sorted((BUNDLE / "agents").glob("*.toml"))
@@ -502,7 +533,7 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
     if context_enabled or prior_context.get("enabled", False):
         hook_bytes = capture("hooks.json")
         inline_hooks = merged_config.get("hooks", {})
-        json_document = json.loads(hook_bytes or b'{"hooks": {}}')
+        json_document = load_hooks_document(hook_bytes) or {}
         if not isinstance(inline_hooks, dict) or not isinstance(json_document, dict):
             raise ValueError("Invalid hooks configuration")
         json_hooks = json_document.get("hooks", {})
@@ -521,15 +552,12 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
                   if owns_handler(events)]
         if len(owners) > 1:
             raise ValueError("Duplicate context recovery handlers in both hook sources; reconcile manually")
-        inline_events = any(key in inline_hooks for key in (
-            "SessionStart", "SessionEnd", "PreCompact", "PostCompact", "PreToolUse", "PostToolUse",
-            "PermissionRequest", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop", "Interrupt"))
         if prior_context.get("enabled"):
             source = prior_context.get("source")
             if source not in ("config.toml", "hooks.json") or (owners and owners[0] != source):
                 raise ValueError("Context recovery hook source changed; reconcile the previous registration first")
         else:
-            source = owners[0] if owners else ("config.toml" if inline_events and hook_bytes is None else "hooks.json")
+            source = owners[0] if owners else default_hook_source(inline_hooks, json_document)
         inline = source == "config.toml"
         document = {"hooks": inline_hooks} if inline else json_document
         registration = context_registration(target, prior_context)
@@ -549,7 +577,7 @@ def plan(target: Path, overwrite_local: bool = False, skip_instructions: bool = 
         return desired[rel] if rel in desired else capture(rel)
 
     hooks_json_bytes, hooked_config = plan_hook_installation(
-        target, merged_config, merged_config, capture_planned, previous, overwrite_local)
+        target, merged_config, capture_planned, previous, overwrite_local)
     if hooked_config is not None:
         merged_config = hooked_config
     if hooks_json_bytes is not None:
@@ -637,13 +665,15 @@ def apply(target: Path, desired: dict, old: dict) -> Path | None:
             raise ValueError("Post-install verification failed")
     except Exception:
         for rel in reversed(written):
-            if read_file(target / rel) != changes[rel]:
-                print(f"Preserved concurrent edit: {rel}", file=sys.stderr)
-                continue
-            if old[rel] is None:
-                (target / rel).unlink()
-            else:
-                atomic_write(target / rel, old[rel], modes[rel])
+            try:
+                if read_file(target / rel) != changes[rel]:
+                    print(f"Preserved concurrent edit: {rel}", file=sys.stderr)
+                elif old[rel] is None:
+                    (target / rel).unlink()
+                else:
+                    atomic_write(target / rel, old[rel], modes[rel])
+            except (OSError, ValueError) as recovery_error:
+                print(f"Could not restore {rel}: {recovery_error}", file=sys.stderr)
         print(f"Installation failed; recovery backup: {backup}", file=sys.stderr)
         raise
     return backup

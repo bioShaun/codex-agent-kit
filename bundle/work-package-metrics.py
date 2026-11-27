@@ -83,8 +83,8 @@ def read_rollout(path, selected):
     starts, completes, models, records, usage_times, contexts = {}, {}, {}, {}, [], []
     latest_model_event = {}
     foreign_usage = 0
-    with path.open(encoding="utf-8") as source:
-        for number, line in enumerate(source, 1):
+    with path.open(encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
             event = strict_json(line, f"{path}:{number}")
             require(isinstance(event, dict), f"invalid event in {path}:{number}")
             kind, payload = event.get("type"), event.get("payload")
@@ -234,7 +234,7 @@ def run(spec_path):
                 all_records[key] = value
         rows.append({"thread_id": identity, "role": role, "parent_thread_id": parent_id,
                      "turn_ids": turns,
-                     "starts": starts, "completes": completes, "records": records})
+                     "starts": starts, "completes": completes})
     require(sum(row["role"] == "root" for row in rows) == 1, "exactly one root thread entry required")
     root_id = next(row["thread_id"] for row in rows if row["role"] == "root")
     for identity in parents:
@@ -256,6 +256,7 @@ def run(spec_path):
     thread_outputs = []
     for row in rows:
         known = []
+        complete_usage = True
         by_model = defaultdict(list)
         for turn in row["turn_ids"]:
             label = {"thread_id": row["thread_id"], "turn_id": turn}
@@ -266,19 +267,22 @@ def run(spec_path):
             usage = by_turn[(row["thread_id"], turn)]
             if not usage:
                 no_usage.append(label)
+            if turn not in row["starts"] or turn not in row["completes"] or not usage:
+                complete_usage = False
             for model, counts in usage:
                 known.append(counts)
                 grouped[(row["role"], model)].append(counts)
                 by_model[model].append(counts)
                 if model == "<unknown>" and label not in unknown_model:
                     unknown_model.append(label)
+        known_total = sum_counts(known)
         thread_outputs.append({"thread_id": row["thread_id"], "role": row["role"],
                                "parent_thread_id": row["parent_thread_id"],
                                "selected_turns": len(row["turn_ids"]),
                                "by_model": [{"model": model, "known_usage": sum_counts(counts),
                                              "responses": len(counts)} for model, counts in sorted(by_model.items())],
-                               "known_usage": sum_counts(known),
-                               "tokens": None if any(t["thread_id"] == row["thread_id"] for t in missing + incomplete + no_usage) else sum_counts(known)})
+                               "known_usage": known_total,
+                               "tokens": known_total if complete_usage else None})
     warnings = []
     if missing or incomplete or no_usage or unknown_model or foreign_total or unknown_provenance:
         warnings.append("Selected telemetry is partial; known_usage sums only recorded responses.")
@@ -287,6 +291,7 @@ def run(spec_path):
     if unknown_provenance:
         warnings.append("Some source formats did not identify parentage; declared roles could not be verified.")
     warnings.append("Selection is declared by the spec; related agents or turns omitted from it cannot be detected.")
+    total = sum_counts([record[2] for record in all_records.values()])
     result.update({"outcome_declared": outcome, "rework_count_declared": spec.get("rework_count"),
                    "routing_notes_declared": spec.get("routing_notes"),
                    "started_at": start.isoformat(), "finished_at": finish.isoformat() if finish else None,
@@ -294,8 +299,8 @@ def run(spec_path):
                    "threads": thread_outputs,
                    "by_role_model": [{"role": role, "model": model, "known_usage": sum_counts(counts),
                                       "responses": len(counts)} for (role, model), counts in sorted(grouped.items())],
-                   "known_usage": sum_counts([counts for counts_list in grouped.values() for counts in counts_list]),
-                   "tokens": None if missing or incomplete or no_usage else sum_counts([counts for counts_list in grouped.values() for counts in counts_list]),
+                   "known_usage": total,
+                   "tokens": None if missing or incomplete or no_usage else total,
                    "missing_turns": missing, "incomplete_turns": incomplete,
                    "turns_without_usage": no_usage, "turns_with_unknown_model": unknown_model,
                    "unknown_provenance_thread_ids": unknown_provenance,

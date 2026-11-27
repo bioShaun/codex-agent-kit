@@ -58,6 +58,87 @@ class CombinedHookTests(unittest.TestCase):
         self.assertEqual(len(parsed["hooks"]["SessionStart"]), 1)
         self.assertEqual(*installer.plan(self.target))
 
+    def test_metadata_only_json_keeps_existing_inline_event_source(self):
+        self.target.mkdir()
+        metadata = '{"description":"user settings"}'
+        (self.target / "hooks.json").write_text(metadata)
+        (self.target / "config.toml").write_text("[[hooks.Stop]]\nhooks = []\n")
+        self.install(True)
+        self.assertEqual((self.target / "hooks.json").read_text(), metadata)
+        config = tomllib.loads((self.target / "config.toml").read_text())
+        self.assert_spawn(config)
+        self.assertIn("SessionStart", config["hooks"])
+        self.assertEqual(*installer.plan(self.target))
+
+    def test_user_command_mentioning_kit_script_is_preserved(self):
+        self.target.mkdir()
+        command = {"type": "command", "command": "echo force_fork_turns_none.py.old"}
+        group = {"matcher": "Bash", "hooks": [command]}
+        path = self.target / "hooks.json"
+        path.write_text(json.dumps({"hooks": {"PreToolUse": [group]}}))
+        self.install()
+        document = json.loads(path.read_text())
+        self.assert_spawn(document)
+        self.assertIn(group, document["hooks"]["PreToolUse"])
+
+    def test_overwrite_replaces_edited_invocation_without_registering_twice(self):
+        self.install()
+        path = self.target / "hooks.json"
+        document = json.loads(path.read_text())
+        handler = document["hooks"]["PreToolUse"][0]["hooks"][0]
+        handler.pop("statusMessage")
+        handler["command"] = handler["command"].replace("python3 ", "python3 -B ", 1)
+        path.write_text(json.dumps(document))
+        with self.assertRaisesRegex(ValueError, "Local edit detected"):
+            installer.plan(self.target)
+        desired, old = installer.plan(self.target, overwrite_local=True)
+        installer.apply(self.target, desired, old)
+        self.assert_spawn(json.loads(path.read_text()))
+        self.assertEqual(*installer.plan(self.target))
+
+    def test_manual_python_invocation_is_detected_before_first_install(self):
+        self.target.mkdir()
+        group = installer.desired_hook_group(self.target)
+        handler = group["hooks"][0]
+        handler.pop("statusMessage")
+        handler["command"] = handler["command"].replace("python3 ", "python3 -B ", 1)
+        handler["command"] = handler["command"].replace("/hooks/", "/hooks/./")
+        (self.target / "hooks.json").write_text(json.dumps({"hooks": {"PreToolUse": [group]}}))
+        with self.assertRaisesRegex(ValueError, "Local edit detected"):
+            installer.plan(self.target)
+        desired, old = installer.plan(self.target, overwrite_local=True)
+        installer.apply(self.target, desired, old)
+        self.assert_spawn(json.loads((self.target / "hooks.json").read_text()))
+
+    def test_wrapper_in_second_source_is_reported_alongside_standard_registration(self):
+        self.install()
+        group = installer.desired_hook_group(self.target)
+        handler = group["hooks"][0]
+        handler.pop("statusMessage")
+        handler["command"] = "env " + handler["command"]
+        config = self.target / "config.toml"
+        content = tomllib.loads(config.read_text())
+        content["hooks"] = {"PreToolUse": [group]}
+        config.write_text(installer.dump_toml(content))
+        for overwrite in (False, True):
+            with self.assertRaisesRegex(ValueError, "reconcile manually"):
+                installer.plan(self.target, overwrite_local=overwrite)
+
+    def test_overwrite_preserves_custom_wrapper_even_with_installed_status_message(self):
+        self.install()
+        path = self.target / "hooks.json"
+        document = json.loads(path.read_text())
+        handler = document["hooks"]["PreToolUse"][0]["hooks"][0]
+        document["hooks"]["PreToolUse"][0]["matcher"] = "^(collaborationspawn_agent)$"
+        original = handler["command"]
+        for command in (original + " && echo user-action", "true&&/usr/bin/" + original,
+                        "/opt/team-hooks/" + original):
+            with self.subTest(command=command):
+                handler["command"] = command
+                path.write_text(json.dumps(document))
+                with self.assertRaisesRegex(ValueError, "reconcile manually"):
+                    installer.plan(self.target, overwrite_local=True)
+
     def test_upgrade_context_only_install_preserves_registration(self):
         self.install(True)
         path = self.target / "hooks.json"

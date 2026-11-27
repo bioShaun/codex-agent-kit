@@ -1,6 +1,6 @@
 name = "astra_validator_complex"
 description = "Validate multi-stage host behavior and interpret correlated evidence without repairing source code."
-model = "gpt-6.1-sol"
+model = "gpt-6.2-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 

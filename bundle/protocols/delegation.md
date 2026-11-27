@@ -2,26 +2,26 @@
 
 ## 配置入口与角色
 
-实际配置是唯一来源：[`config.toml`](@@CODEX_HOME@@/config.toml) 和 [`agents/`](@@CODEX_HOME@@/agents/)。本文规定用户级默认执行协议；目标项目的 AGENTS.md 和每轮 TaskSpec 提供项目特有的约束、测试命令和验收要求。角色使用 `astra_` 前缀，并与其他用户角色共存。
+实际配置是唯一来源：[`config.toml`](@@CODEX_HOME@@/config.toml) 和 [`agents/`](@@CODEX_HOME@@/agents/)。本文规定用户级默认执行协议；目标项目的 AGENTS.md 和每轮 TaskSpec 提供项目特有的约束、测试命令和验收要求。角色使用 `astra_` 前缀，并与其他用户角色共存。本套配置采用 Root 自主判断委派：不要求用户每轮显式点名子代理；上游默认偏向显式触发，这一差异是既定选择，用户指令和项目规则仍优先。
 
 | Codex agent_type | 模型 | effort | 职责 |
 |---|---|---|---|
-| Root（主会话） | gpt-6-astra | high | 需求、架构边界、复杂实现、TaskSpec、调度、最终整合 |
+| Root（主会话） | gpt-6.2-astra | high | 需求、架构边界、复杂实现、TaskSpec、调度、最终整合 |
 | astra_locator | gpt-6-luna | low | 符号、配置、测试定位 |
-| astra_explorer | gpt-6.1-sol | medium | 跨文件调用链、状态流和约束 |
-| astra_worker | gpt-6.1-sol | medium | 有边界、需要推理的实现 |
+| astra_explorer | gpt-6-luna | medium | 跨文件调用链、状态流和约束 |
+| astra_worker | gpt-6.2-sol | medium | 有边界、需要推理的实现 |
 | astra_worker_fast | gpt-6-luna | medium | 文件明确的机械性修改 |
 | astra_validator | gpt-6-luna | low | 精确确定性命令、断言及结果证据 |
-| astra_validator_complex | gpt-6.1-sol | medium | 多阶段 host 行为与关联证据解释 |
-| astra_reviewer | gpt-6.1-sol | high | 独立正确性审查 |
+| astra_validator_complex | gpt-6.2-sol | medium | 多阶段 host 行为与关联证据解释 |
+| astra_reviewer | gpt-6.2-sol | high | 独立正确性审查 |
 
-2026-09-30 模型迁移：四个 Sol 角色升级至 gpt-6.1-sol，用于跨文件分析、实现、复杂验证和审查；Luna 用于定位、机械修改和确定性验证。各角色 effort 沿用原值，Root 保持 gpt-6-astra/high；复杂或高风险任务由 Root 根据证据决定是否升级到 Astra。默认子模型为 gpt-6.1-sol/medium，顶层 review_model 为 gpt-6.1-sol；三个 lazycodex 审查角色同步升级至 gpt-6.1-sol/high，仅在对应工作流调用。此分配是试运行起点，比较通过率、返工次数、总耗时与总成本后再调整。gpt-6.1-sol 支持 low、medium、high、xhigh、max，不支持 none、minimal、ultra；本机模型目录已校正为默认 medium，2026-09-30 既有调用记录验证五个支持档位可调用，但不代表真实任务质量、速度或本次角色加载已验证。本文旧模型耗时记录仅为历史证据，不代表 GPT-6.1 性能。配置变更后新开主会话，核对实际加载的 model/effort。
+2026-11-19 模型迁移：Root 升级至 gpt-6.2-astra/high；实现、复杂验证和审查三个角色升级至 gpt-6.2-sol；Explorer 按官方“探索与阅读密集型任务优先轻模型”的建议改用 gpt-6-luna/medium，与 Locator、Worker-fast、Validator 共用 Luna。默认子模型改为 gpt-6-luna/low，顶层 review_model 为 gpt-6.2-sol；三个 lazycodex 审查角色为 gpt-6.2-sol/high，`lazycodex-qa-executor` 从模型目录中不存在的 gpt-5.6-luna 改为 gpt-6-luna/high。并发上限按 Responses API 默认的 3 个并发子代理配置。本机模型目录（2026-11-19）含 gpt-6.2-astra 与 gpt-6.2-sol，暂无 6.2 的 Luna/Terra；6.2 两模型支持 low、medium、high、xhigh、max，不支持 none、minimal、ultra。此分配是试运行起点，比较通过率、返工次数、总耗时与总成本后再调整。既有调用记录只证明标识可解析，不代表真实任务质量、速度或本次角色加载已验证；旧模型耗时记录仅为历史证据。配置变更后新开主会话，核对实际加载的 model/effort。
 
-模型标识必须与实际运行目录对应，不能把 `gpt-5.6` 默认当成 Sol 的可靠别名。角色文件固定模型和 effort；需要升级时由 Root 明确调整配置/角色，不能假设 spawn 参数一定覆盖角色文件。
+模型标识必须与实际运行目录对应，不能用 `gpt-6`、`gpt-6.1` 代替 `gpt-6.2`，也不能假定同代模型共享上下文或配额。角色文件固定模型和 effort；需要升级时由 Root 明确调整配置/角色，不能假设 spawn 参数一定覆盖角色文件。
 
 以下角色覆盖、权限继承与并发计数说明，以 Codex `rust-v0.166.0` 的源码为当前核对基线（见[源码参考](environment.md#参考)）。本仓库 PreToolUse spawn matcher 仍以 [issue #4](https://github.com/bioShaun/codex-agent-kit/issues/4) 在 0.160.1 `multi_agent_v2` 实测的 `collaborationspawn_agent` 为准，升基线后应按该 issue 方法复测；未复测前不扩展为官方文档中的 `Agent` / `spawn_agent` 别名。其他版本和宿主以实际工具元数据及权限证据为准；升级后应重新核对，不能将该版本的实现推定为所有宿主的行为。
 
-用户配置的 `[agents] max_concurrent_threads_per_session = 4` 不计 Root。Codex 的线程登记只统计已派生子代理，因此该配置值表示最多 4 个并发子代理；它仍不保证运行时容量，以当前宿主工具元数据及实际限制为准。同名的 `features.multi_agent_v2.max_concurrent_threads_per_session` 按包含 Root 的总会话线程计数，不能与本键混用；本仓库未设置该键。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。接近容量上限或状态不明时查询实际状态；宿主支持释放时才释放已结束线程，否则延后派发。同一容量错误后，在容量或调度条件改变前不重复 spawn 或 followup，也不提高上限；复用已结束线程同样可能占活跃任务容量。相关探索或实现可复用合适的代理，但不得用旧 Reviewer 复用替代修复后的 fresh review。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
+用户配置的 `[agents] max_concurrent_threads_per_session = 3` 不计 Root。Codex 的线程登记只统计已派生子代理，因此该配置值表示最多 3 个并发子代理；它仍不保证运行时容量，以当前宿主工具元数据及实际限制为准。同名的 `features.multi_agent_v2.max_concurrent_threads_per_session` 按包含 Root 的总会话线程计数，不能与本键混用；本仓库未设置该键。需要委派时通常同时使用 1–3 个子代理，不为了用满额度而派发。接近容量上限或状态不明时查询实际状态；宿主支持释放时才释放已结束线程，否则延后派发。同一容量错误后，在容量或调度条件改变前不重复 spawn 或 followup，也不提高上限；复用已结束线程同样可能占活跃任务容量。相关探索或实现可复用合适的代理，但不得用旧 Reviewer 复用替代修复后的 fresh review。已有会话可能持有旧角色列表，配置变更后从目标项目启动新的主会话。
 
 ## 委派与上下文
 
@@ -41,4 +41,4 @@
 - 通常只回传最终结论、证据和限制。阻塞、重大反证或可解除 Root 依赖的阶段性结论及时发送，不发送固定进度心跳。Root 对用户的必要进度沟通不受此限制。
 - Root 采纳充分、可信的常规证据，不默认重读全部文件或重跑全部检查；重点复核冲突、关键高风险结论和修改后的最终行为。独立审查对指定范围的核实、必要状态采集及项目要求的检查仍须执行。
 
-当前会话宿主示例：`collaboration.spawn_agent` 新建子代理（显式 `fork_turns="none"`），`followup_task` 复用已有代理（Worker/Validator 写入前先确认写权限，降级则改为新建代理），`send_message` 发送阶段性信息，`wait_agent` 等待依赖，`interrupt_agent` 发出中断；中断后仍须确认实际停止。`[agents] max_concurrent_threads_per_session = 4` 不计 Root，配置上最多同时运行四个子代理。此示例不固定其他宿主的名称和容量，每个新会话均以实际工具元数据为准。
+当前会话宿主示例：`collaboration.spawn_agent` 新建子代理（显式 `fork_turns="none"`），`followup_task` 复用已有代理（Worker/Validator 写入前先确认写权限，降级则改为新建代理），`send_message` 发送阶段性信息，`wait_agent` 等待依赖，`interrupt_agent` 发出中断；中断后仍须确认实际停止。`[agents] max_concurrent_threads_per_session = 3` 不计 Root，配置上最多同时运行三个子代理。此示例不固定其他宿主的名称和容量，每个新会话均以实际工具元数据为准。

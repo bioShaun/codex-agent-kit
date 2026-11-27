@@ -47,7 +47,7 @@ python3 install.py --target /path/to/codex-home --apply
 | 内容 | 安装行为 |
 |---|---|
 | `bundle/agents/*.toml` | 安装全部 11 个角色并显式注册；保留其他角色 |
-| `bundle/config.toml` | 合并其中的审查模型、multi-agent 开关、默认子模型、并发参数 |
+| `bundle/config.toml` | 合并其中的审查模型、子代理开关与默认子模型、并发参数 |
 | `bundle/astra-planner.md`、`bundle/protocols/manifest.json` 及其专项协议 | 安装完整协议集，按实际安装目录替换路径占位符；受管文件支持漂移检查和备份 |
 | 6 个辅助脚本 | 安装到目标目录根部；脚本通过相邻文件定位依赖 |
 | `bundle/hooks/force_fork_turns_none.py` | 安装到 `hooks/`，把受管 PreToolUse 条目合并进已有 hook 配置 |
@@ -61,12 +61,12 @@ python3 install.py --target /path/to/codex-home --apply
 | 角色 | 模型 | effort |
 |---|---|---|
 | `astra_locator`、`astra_validator` | `gpt-6-luna` | low |
-| `astra_worker_fast` | `gpt-6-luna` | medium |
-| `astra_explorer`、`astra_worker`、`astra_validator_complex` | `gpt-6.1-sol` | medium |
-| `astra_reviewer`、三个 `lazycodex-*-reviewer` | `gpt-6.1-sol` | high |
-| `lazycodex-qa-executor` | `gpt-5.6-luna` | high |
+| `astra_explorer`、`astra_worker_fast` | `gpt-6-luna` | medium |
+| `astra_worker`、`astra_validator_complex` | `gpt-6.2-sol` | medium |
+| `astra_reviewer`、三个 `lazycodex-*-reviewer` | `gpt-6.2-sol` | high |
+| `lazycodex-qa-executor` | `gpt-6-luna` | high |
 
-默认子模型为 `gpt-6.1-sol/medium`，审查模型为 `gpt-6.1-sol`。LazyCodex 角色仅用于相应工作流；其技能/`omo` 等外部工具不随此仓库安装。
+默认子模型为 `gpt-6-luna/low`，审查模型为 `gpt-6.2-sol`；配置来源机器的 Root 使用 `gpt-6.2-astra`，其他机器沿用本机主模型，最多 3 个并发子代理。LazyCodex 角色仅用于相应工作流；其技能/`omo` 等外部工具不随此仓库安装。
 
 资源调度、重任务阈值和临时目录规则由各机器的用户级及项目级 `AGENTS.md` 维护。调度协议和角色遵循当前环境的适用规则，由 Root 在 TaskSpec 中显式传给子代理；本仓库不统一要求安装特定调度工具。测试只使用本仓库 `.work/` 下的小型隔离目录。
 
@@ -94,7 +94,7 @@ python3 install.py --check                                # 后续检查会记�
 
 安装器还会注册 `SubagentStart` hook。启动 `astra_reviewer` 时，它会提醒 Reviewer 按 TaskSpec 指定的类型输出首行状态。安装后在 Codex `/hooks` 中检查并信任这条 hook。Root 仍会核对首行格式和审查类型。
 
-没有 hook 配置时，安装器新建目标目录下的 [`hooks.json`](https://developers.openai.com/codex/hooks)。如果只有 `config.toml` 中的内联 `[hooks]`，安装器会将两条受管 hook 写入该表。如果两份配置已经存在，优先沿用已有受管 hook 所在的文件。两份文件各有受管 hook 时，安装器会提示手动协调来源。用户添加的 hook 会保留。受管条目的本地改动会被拒绝，除非显式指定 `--overwrite-local`。受管命令和用户 handler 共用一个 matcher 组时，需要先手动拆分。内联合并会重排 TOML，原始配置和注释可在备份中查看。
+安装器优先沿用受管 hook 所在的文件。两份配置各有受管 hook 时，需要手动协调来源。首次安装时，若只有 `config.toml` 含事件处理器，安装器会把两条受管 hook 写入内联表。其他情况下写入目标目录下的 [`hooks.json`](https://developers.openai.com/codex/hooks)。用户添加的 hook 会保留。受管条目的本地改动需要显式指定 `--overwrite-local`。受管命令和用户处理器共用一个 matcher 组，或自定义包装命令引用受管脚本或留有安装标记时，需要手动协调，以保留用户的其他操作。内联合并会重排 TOML，原始配置和注释可在备份中查看。
 
 ## 备份与恢复
 

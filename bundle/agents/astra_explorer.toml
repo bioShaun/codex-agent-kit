@@ -1,6 +1,6 @@
 name = "astra_explorer"
 description = "Trace architecture, callers, state flow, and implementation constraints across files."
-model = "gpt-6.1-sol"
+model = "gpt-6-luna"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 

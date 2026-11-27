@@ -93,7 +93,7 @@ Root 将有效 `(code)` 结果写入 code_review，验证结果来自对应执�
 
 写入既有验收台账前，先用 `python3 @@CODEX_HOME_SHELL@@/review-contract.py state REQUEST.json RESULT.txt STATE.json` 校验候选状态。字段使用上述扁平枚举，不用 `accepted` 或嵌套 status 对象替代。result/state 检查失败必须记录 contract_error，并阻止对应范围的通过状态；合法 BLOCKED/REQUEST_CHANGES 的解析成功也不表示业务通过。工具输出的 schema_valid 只证明结构和状态关系，证据真实性、未关闭 findings、测试及 strict 父子探针仍由 Root 独立核对。工具无法拦截绕过它的写入，不能宣称已获得宿主级强制门禁。
 
-普通审查的实际 turn_context 由事后审计者从 rollout 读取，取不到则记未知；不要求 Root 运行时取得子线程上下文。strict 由父入口和 Reviewer 分别产生实际权限探针证据，Root 关联入口退出状态和证据作判断。不得仅凭角色配置或要求字段宣称运行时只读隔离；当前 Codex 不应用角色 `sandbox_mode`，子代理继承父会话权限。
+普通审查的实际 turn_context 由事后审计者从 rollout 读取，取不到则记未知；不要求 Root 运行时取得子线程上下文。strict 由父入口和 Reviewer 分别产生实际权限探针证据，Root 关联入口退出状态和证据作判断。不得仅凭角色配置或要求字段宣称运行时只读隔离；角色权限的版本差异及实测要求见[执行协议](execution.md)。
 
 ### 独立性与接受
 

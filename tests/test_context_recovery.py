@@ -87,6 +87,14 @@ class ContextRecoveryTests(unittest.TestCase):
         self.assertIn(self.fields["goal"], self.hook("session-b")["hookSpecificOutput"]["additionalContext"])
         self.assertNotEqual(self.cli("save", "--from-file", "-", data=self.fields).returncode, 0)
 
+    def test_old_session_can_start_a_new_task_after_takeover(self):
+        self.init()
+        self.assertEqual(self.cli("bind", "--task", "task-a", "--takeover",
+                                  session="session-b").returncode, 0)
+        self.init("new-task")
+        self.assertIn("Task: new-task", self.hook()["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("Task: task-a", self.hook("session-b")["hookSpecificOutput"]["additionalContext"])
+
     def test_stale_corrupt_and_completed_state_are_not_injected(self):
         result = self.init()
         path = Path(result["state_path"])
@@ -133,6 +141,13 @@ class ContextRecoveryTests(unittest.TestCase):
         for key in ("goal", "constraints", "next_step"):
             self.assertIn(self.fields[key], context)
         self.assertIn("state.json", context)
+
+    def test_escaped_fields_fit_within_restore_budget(self):
+        self.init(fields={**self.fields, "goal": "\x01" * 1000, "constraints": "\x02" * 1000})
+        context = self.hook()["hookSpecificOutput"]["additionalContext"]
+        self.assertLessEqual(len(context), 4000)
+        self.assertIn(self.fields["jobs"], context)
+        self.assertIn(self.fields["evidence"], context)
 
     def test_hook_is_read_only_and_ignores_unrelated_events(self):
         self.init()

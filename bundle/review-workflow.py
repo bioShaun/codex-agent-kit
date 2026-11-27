@@ -280,27 +280,26 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     files = path_list(value["files"], base, "files")
     required = path_list(value["required_files"], base, "required_files")
     instructions = resolve_input(value["instructions_file"], base, "instructions_file")
-    if not member(instructions, files):
+    file_paths = {os.path.realpath(path) for path in files}
+    required_paths = {os.path.realpath(path) for path in required}
+    instruction_path = os.path.realpath(instructions)
+    if instruction_path not in file_paths:
         files.append(instructions)
-    if not member(instructions, required):
+        file_paths.add(instruction_path)
+    if instruction_path not in required_paths:
         required.append(instructions)
+        required_paths.add(instruction_path)
     evidence = path_list(value.get("validation_evidence", []), base, "validation_evidence", False)
     if kind == "final" and not evidence:
         raise WorkflowError("final review requires nonempty validation_evidence")
     prior = resolve_input(value["prior_findings_file"], base, "prior_findings_file") if "prior_findings_file" in value else None
-    for label, path in [("validation_evidence", item) for item in evidence] + ([ ("prior_findings_file", prior) ] if prior else []):
-        if not member(path, files) or not member(path, required):
+    for label, path in [("validation_evidence", item) for item in evidence] + ([("prior_findings_file", prior)] if prior else []):
+        resolved = os.path.realpath(path)
+        if resolved not in file_paths or resolved not in required_paths:
             raise WorkflowError(f"{label} must be explicitly included in both files and required_files: {path}")
-    for item in required:
-        if not member(item, files):
-            raise WorkflowError(f"required file is omitted from files: {item}")
-    # Reject aliases introduced by automatically joining the instructions file.
-    canonical: dict[str, Path] = {}
-    for item in files:
-        resolved = os.path.realpath(item)
-        if resolved in canonical:
-            raise WorkflowError(f"ambiguous files aliases: {canonical[resolved]} and {item}")
-        canonical[resolved] = item
+    omitted = required_paths - file_paths
+    if omitted:
+        raise WorkflowError(f"required file is omitted from files: {min(omitted)}")
     require_regular(files, "source file")
     require_regular(required, "required file")
     instruction_bytes = regular_bytes(instructions, "instructions_file")
@@ -308,6 +307,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         instruction_text = instruction_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise WorkflowError(f"instructions_file is not UTF-8: {exc}") from exc
+
+    if not instruction_text.strip():
+        raise WorkflowError("instructions_file must contain nonempty review instructions")
 
     baseline_files: dict[str, str] = {}
     baseline_path = None
@@ -337,7 +339,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     try:
         staging.mkdir(mode=0o700)
         (staging / "frozen").mkdir()
-        snapshot = {"files": {str(path): (sha_bytes(instruction_bytes) if member(path, [instructions])
+        snapshot = {"files": {str(path): (sha_bytes(instruction_bytes) if os.path.realpath(path) == instruction_path
                                           else file_hash(path, "source file")) for path in files}}
         snapshot_data = json_bytes(snapshot)
         snapshot_id = "sha256:" + sha_bytes(snapshot_data)
@@ -362,7 +364,6 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         brief_lines += ["", "The delta is navigation only; acceptance still requires hashing every frozen file and reviewing scope semantics.", ""]
         brief_data = "\n".join(brief_lines).encode()
         final_brief = output / "brief.md"
-        final_frozen = output / "frozen" / "instructions.bin"
         appendix = (
             "\n\nPrepared review workflow package:\n" + str(output) +
             "\nReview brief: " + str(final_brief) +

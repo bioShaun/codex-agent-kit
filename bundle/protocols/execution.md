@@ -33,9 +33,9 @@
 
 同一 cwd 同时最多一个写入者，包括会生成文件的 Validator；Validator 与 Worker 顺序运行。文件不重叠也不能绕过该规则。并行写入必须使用隔离工作目录，并有单独的整合与验证任务。
 
-Explorer、Locator、Reviewer 的角色文件声明 `sandbox_mode = "read-only"`；Worker、Validator 声明 `workspace-write`。`sandbox_mode` / `approval_policy` 只是声明，Codex `rust-v0.166.0` 仍不会应用到子代理，子代理继承父会话权限。自 0.164 起，角色层 `[features]` 可把 `apps` / `plugins` / `memories` / `request_permissions_tool` 设为 `false`；只读 Astra 三角色已硬关这四项（不关 `shell_tool`）。`fork_turns="none"` 也不隔离父级 skills/plugins。Validator 禁止源码修改仍是行为约定，必须由状态比较检测。Root 的 workspace-write 也不提供“只能规划”的工具层强制限制。严格只读隔离来自 `review-readonly.sh`。
+Explorer、Locator、Reviewer 的角色文件声明 `sandbox_mode = "read-only"`，Worker、Validator 声明 `workspace-write`。官方文档（2026-11-19）说明自定义代理可以覆盖默认沙箱，父会话在 spawn 时重新施加的实时权限覆盖优先。本机 Codex 0.170.0 的角色默认值仍待实测。自 0.164 起，角色层 `[features]` 可禁用 `apps`、`plugins`、`memories` 和 `request_permissions_tool`。只读 Astra 三角色已禁用这四项并保留 `shell_tool`。`fork_turns="none"` 仍沿用父级 skills/plugins。通过比较文件状态核对 Validator 是否遵守禁止修改源码的约定。严格只读隔离依赖 `review-readonly.sh` 和实际权限证据。
 
-父会话 `/permissions` 或命令行权限决定父会话权限，子代理继承该快照，而不是改用角色文件中的沙箱声明。测试应检查实际生效权限；不能仅根据 TOML 宣称隔离。不要用 `--yolo` 测试 read-only 行为。外部连接器/网络副作用不由文件系统 read-only 自动约束。
+父会话 `/permissions` 或命令行权限决定父会话权限，spawn 时的实时覆盖优先于角色文件声明；未被覆盖时角色默认值是否生效，以当前版本的实际元数据为准。测试应检查实际生效权限；不能仅根据 TOML 宣称隔离。不要用 `--yolo` 测试 read-only 行为。外部连接器/网络副作用不由文件系统 read-only 自动约束。
 
 历史观察（配置源服务器的 Codex CLI 0.154.0，非本次安装服务器的验证结果）：即使未传 `--yolo`，workspace-write Root 下的 astra_reviewer 仍能写入工作区，角色文件中的 read-only 没有形成运行时隔离。Locator/Explorer 的元数据也显示 workspace-write。该历史结果不证明本次安装服务器的行为。核对的 Codex `rust-v0.166.0` 源码同样不把角色 `sandbox_mode` 应用到子代理，而是用父会话权限快照覆盖子权限；同一写入会话中的“只读角色”仍只按行为约定处理。角色层 feature 禁用（0.164+）只收窄 apps/plugins/memories/request_permissions 等能力，不能替代 `review-readonly.sh`。
 
@@ -55,4 +55,4 @@ bash @@CODEX_HOME_SHELL@@/review-readonly.sh review-round-1 --artifacts review-r
 bash @@CODEX_HOME_SHELL@@/review-readonly.sh /path/to/review-request.json > /path/to/review-events.jsonl
 ```
 
-入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer；子代理继承该只读父会话的权限。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。
+入口以 `codex exec --sandbox read-only` 启动独立 Root，再以无历史方式调用 astra_reviewer；子代理继承该只读父会话的权限。必须以实际权限探测证明 Root/Reviewer 的运行时隔离；角色 TOML 或模型拒绝写入不是证据。入口要求 Bash、Python 3 和 Codex；stdlib watchdog 建立独立进程组，主进程先退出时继续等同组后台进程。全组在期限内结束时返回主进程退出码。`REVIEW_READONLY_TIMEOUT`（默认 600）秒后 TERM，宽限 10 秒后对进程组 KILL。父 Root 以 low effort 运行，只做权限探针、spawn、wait 和转述；Reviewer 的 model/effort 仍由角色文件固定，须以子会话 turn_context 核对。每次 strict 运行记录 child 实际耗时，用于日后收紧默认值；子契约应写明软预算（例如 300 秒），超时时带覆盖范围返回 BLOCKED 而不是被截断。退出 0 仅表示 session 完成，仍需检查 Reviewer verdict 与权限证据；124 表示超时后终止，137 表示已强杀且仍需确认无残留进程。依赖缺失是 BLOCKED；strict 失败不能降级为 behavior-only PASS。

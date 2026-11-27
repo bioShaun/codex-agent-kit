@@ -33,7 +33,6 @@ documented "success, leave the call alone" result.
 
 from __future__ import annotations
 
-import copy
 import json
 import sys
 
@@ -60,7 +59,7 @@ def decision(event: object) -> dict | None:
         return None
     # Copy every original field. Adding or dropping keys fails closed inside
     # Codex (deny_unknown_fields) and would not force a fresh spawn.
-    updated = copy.deepcopy(tool_input)
+    updated = tool_input.copy()
     updated["fork_turns"] = "none"
     return {
         "hookSpecificOutput": {
